@@ -233,6 +233,20 @@ export class FoundryConnector {
       return;
     }
 
+    // Keepalive from the module: reply immediately so it knows the link is alive.
+    // (The module pings actively because browsers throttle timers in background
+    // tabs and idle sockets get reaped by proxies/NAT.)
+    if (message.type === 'ping') {
+      try {
+        this.foundrySocket?.send(
+          JSON.stringify({ type: 'pong', id: message.id, data: { timestamp: Date.now() } })
+        );
+      } catch (error) {
+        this.logger.warn('Failed to reply to keepalive ping', error);
+      }
+      return;
+    }
+
     if (message.type === 'pong') {
       const pending = this.pendingQueries.get(message.id);
       if (pending) {
