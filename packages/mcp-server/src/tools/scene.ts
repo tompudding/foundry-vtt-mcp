@@ -42,6 +42,121 @@ export class SceneTools {
         },
       },
       {
+        name: 'get-token-state',
+        description:
+          'Get LIVE state (HP, AC, conditions with badge values, active effects, and immunities/weaknesses/resistances) of tokens on the active scene, read from each token\'s own synthetic actor — correct for unlinked tokens whose conditions differ from the world actor. Identify one token by tokenId, tokenName, or nearest x/y pixel coordinates, or pass all: true for every token. Pass selected: true for the token(s) the GM currently has selected on the canvas, or targeted: true for the GM\'s targeted token(s).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tokenId: { type: 'string', description: 'Exact token document id' },
+            tokenName: { type: 'string', description: 'Token name (exact, then substring match)' },
+            x: { type: 'number', description: 'Scene x coordinate; pairs with y for nearest-token lookup' },
+            y: { type: 'number', description: 'Scene y coordinate; pairs with x for nearest-token lookup' },
+            all: { type: 'boolean', description: 'Return state of ALL tokens on the scene', default: false },
+            selected: { type: 'boolean', description: 'Use the token(s) currently SELECTED on the GM canvas', default: false },
+            targeted: { type: 'boolean', description: 'Use the token(s) currently TARGETED by the GM user', default: false },
+          },
+        },
+      },
+      {
+        name: 'get-token-distances',
+        description:
+          'Measure grid distances from one origin token to all other tokens on the viewed scene, using the game system\'s OWN distance metric (PF2e: closest occupied squares, alternating 5-10-5 diagonals, elevation-aware) so results match the in-app ruler. Identify the origin by tokenId, tokenName, selected: true, or targeted: true. Optional rangeFeet flags each token as in/out of range (e.g. "who is within 30 feet of the selected ogre"). Optional reachFeet applies reach-weapon measurement.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tokenId: { type: 'string', description: 'Origin token document id' },
+            tokenName: { type: 'string', description: 'Origin token name (exact, then substring)' },
+            selected: { type: 'boolean', description: 'Use the single token selected on the GM canvas as origin', default: false },
+            targeted: { type: 'boolean', description: 'Use the single token targeted by the GM as origin', default: false },
+            rangeFeet: { type: 'number', description: 'If set, adds an inRange flag per token for this range' },
+            reachFeet: { type: 'number', description: 'Measure as a reach attack of this reach (PF2e reach diagonal rule)' },
+            includeHidden: { type: 'boolean', description: 'Include hidden tokens in results', default: false },
+          },
+        },
+      },
+      {
+        name: 'get-item-identification',
+        description:
+          'List magical/alchemical physical items with mystification status and identify-check DCs per skill (PF2e: level+rarity DCs, cursed treated as unique, non-matching tradition skills harder). trueName is GM-only knowledge for mystified items — never reveal it to the player. Scope by selected token, tokenName/tokenId, the viewed scene (default), or allScenes.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            selected: { type: 'boolean', description: 'Only items on the selected token(s)', default: false },
+            tokenId: { type: 'string' },
+            tokenName: { type: 'string' },
+            allScenes: { type: 'boolean', description: 'Scan every scene and world actor', default: false },
+            includePlayerOwned: { type: 'boolean', description: 'Include player-owned actors', default: false },
+            onlyMystified: { type: 'boolean', description: 'Only currently mystified items', default: false },
+          },
+        },
+      },
+      {
+        name: 'set-item-identification',
+        description:
+          'Change item identification via the PF2e system\'s own method. action "identify" reveals an item (posts a chat card unless postChat: false); "mystify" hides one; "mystify-all" bulk-mystifies every identified magical/alchemical item (player-owned gear excluded by default). Requires the module\'s "Allow Identification Writes" setting — a scoped permission independent of general write operations.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['identify', 'mystify', 'mystify-all'] },
+            itemUuid: { type: 'string', description: 'Item uuid from get-item-identification (identify/mystify)' },
+            allScenes: { type: 'boolean', description: 'mystify-all: cover every scene and world actor', default: false },
+            includePlayerOwned: { type: 'boolean', default: false },
+            postChat: { type: 'boolean', description: 'Post a reveal chat card on identify', default: true },
+          },
+          required: ['action'],
+        },
+      },
+      {
+        name: 'apply-damage',
+        description:
+          'Apply damage or healing to a token via the PF2e damage pipeline (resistances, weaknesses, hardness, temp HP, and immunities are applied automatically). Identify the target by tokenId, tokenName, selected: true, or targeted: true. amount is a positive number; set healing: true to heal instead. skipIWR applies the number as-is (ignoring resistances/weaknesses); raw forces plain HP subtraction. Requires the module\'s "Allow Combat Writes" setting.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tokenId: { type: 'string', description: 'Target token document id' },
+            tokenName: { type: 'string', description: 'Target token name (exact, then substring)' },
+            selected: { type: 'boolean', description: 'Apply to the selected token(s)', default: false },
+            targeted: { type: 'boolean', description: 'Apply to the targeted token(s)', default: false },
+            amount: { type: 'number', description: 'Amount of damage (or healing if healing: true); positive number' },
+            healing: { type: 'boolean', description: 'Heal instead of damage', default: false },
+            skipIWR: { type: 'boolean', description: 'Apply the number as-is, ignoring resistances/weaknesses', default: false },
+            raw: { type: 'boolean', description: 'Plain HP arithmetic, bypassing the system pipeline entirely', default: false },
+          },
+          required: ['amount'],
+        },
+      },
+      {
+        name: 'get-scene-walls',
+        description:
+          'Get wall and door geometry for the active scene so the GM can reason about line of sight, cover, chokepoints, and doors. Each wall gives endpoint coordinates (scene pixels and grid squares gx/gy), whether it blocks movement and sight, and its one-way direction if any. Doors also report type (door/secret) and state (closed/open/locked, passableNow). Pass doorsOnly: true for just the doors.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            doorsOnly: { type: 'boolean', description: 'Return only doors and secret doors', default: false },
+            blocksSight: { type: 'boolean', description: 'Filter to walls that DO (true) or do NOT (false) block sight. Open doors never block sight.' },
+            blocksMovement: { type: 'boolean', description: 'Filter to walls that DO (true) or do NOT (false) block movement.' },
+            includeInvisible: { type: 'boolean', description: 'Include invisible walls (block movement, not sight)', default: true },
+          },
+        },
+      },
+      {
+        name: 'get-line-of-sight',
+        description:
+          'Determine whether a source token can see a target token, using corner-to-corner ray casting (16 rays from the source\'s 4 corners to the target\'s 4 corners) against sight-blocking walls (open doors do not block). Returns "clear" (a source corner sees all target corners), "blocked" (all 16 rays hit a wall), or "cover" (in between — GM adjudicates lesser vs standard cover). Identify tokens by id, name, sourceSelected, or targetTargeted.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sourceTokenId: { type: 'string' },
+            sourceTokenName: { type: 'string' },
+            sourceSelected: { type: 'boolean', description: 'Use the selected token as the source', default: false },
+            targetTokenId: { type: 'string' },
+            targetTokenName: { type: 'string' },
+            targetTargeted: { type: 'boolean', description: 'Use the targeted token as the target', default: false },
+          },
+        },
+      },
+      {
         name: 'get-world-info',
         description: 'Get basic information about the Foundry world and system',
         inputSchema: {
@@ -50,6 +165,154 @@ export class SceneTools {
         },
       },
     ];
+  }
+
+  async handleGetTokenState(args: any): Promise<any> {
+    const schema = z.object({
+      tokenId: z.string().optional(),
+      tokenName: z.string().optional(),
+      x: z.number().optional(),
+      y: z.number().optional(),
+      all: z.boolean().default(false),
+      selected: z.boolean().default(false),
+      targeted: z.boolean().default(false),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Getting token state', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getTokenState', params);
+    } catch (error) {
+      this.logger.error('Failed to get token state', error);
+      throw new Error(
+        `Failed to get token state: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleGetTokenDistances(args: any): Promise<any> {
+    const schema = z.object({
+      tokenId: z.string().optional(),
+      tokenName: z.string().optional(),
+      selected: z.boolean().default(false),
+      targeted: z.boolean().default(false),
+      rangeFeet: z.number().optional(),
+      reachFeet: z.number().optional(),
+      includeHidden: z.boolean().default(false),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Measuring token distances', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getTokenDistances', params);
+    } catch (error) {
+      this.logger.error('Failed to measure token distances', error);
+      throw new Error(
+        `Failed to measure token distances: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleGetItemIdentification(args: any): Promise<any> {
+    const schema = z.object({
+      selected: z.boolean().default(false),
+      tokenId: z.string().optional(),
+      tokenName: z.string().optional(),
+      allScenes: z.boolean().default(false),
+      includePlayerOwned: z.boolean().default(false),
+      onlyMystified: z.boolean().default(false),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Getting item identification', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getItemIdentification', params);
+    } catch (error) {
+      this.logger.error('Failed to get item identification', error);
+      throw new Error(
+        `Failed to get item identification: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleSetItemIdentification(args: any): Promise<any> {
+    const schema = z.object({
+      action: z.enum(['identify', 'mystify', 'mystify-all']),
+      itemUuid: z.string().optional(),
+      allScenes: z.boolean().default(false),
+      includePlayerOwned: z.boolean().default(false),
+      postChat: z.boolean().default(true),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Setting item identification', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.setItemIdentification', params);
+    } catch (error) {
+      this.logger.error('Failed to set item identification', error);
+      throw new Error(
+        `Failed to set item identification: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleApplyDamage(args: any): Promise<any> {
+    const schema = z.object({
+      tokenId: z.string().optional(),
+      tokenName: z.string().optional(),
+      selected: z.boolean().default(false),
+      targeted: z.boolean().default(false),
+      amount: z.number(),
+      healing: z.boolean().default(false),
+      skipIWR: z.boolean().default(false),
+      raw: z.boolean().default(false),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Applying damage', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.applyTokenDamage', params);
+    } catch (error) {
+      this.logger.error('Failed to apply damage', error);
+      throw new Error(
+        `Failed to apply damage: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleGetLineOfSight(args: any): Promise<any> {
+    const schema = z.object({
+      sourceTokenId: z.string().optional(),
+      sourceTokenName: z.string().optional(),
+      sourceSelected: z.boolean().default(false),
+      targetTokenId: z.string().optional(),
+      targetTokenName: z.string().optional(),
+      targetTargeted: z.boolean().default(false),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Computing line of sight', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getLineOfSight', params);
+    } catch (error) {
+      this.logger.error('Failed to compute line of sight', error);
+      throw new Error(
+        `Failed to compute line of sight: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleGetSceneWalls(args: any): Promise<any> {
+    const schema = z.object({
+      doorsOnly: z.boolean().default(false),
+      blocksSight: z.boolean().optional(),
+      blocksMovement: z.boolean().optional(),
+      includeInvisible: z.boolean().default(true),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Getting scene walls', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getSceneWalls', params);
+    } catch (error) {
+      this.logger.error('Failed to get scene walls', error);
+      throw new Error(
+        `Failed to get scene walls: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
   }
 
   async handleGetCurrentScene(args: any): Promise<any> {

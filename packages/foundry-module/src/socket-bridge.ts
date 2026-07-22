@@ -23,6 +23,14 @@ export class SocketBridge {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectTimer: any = null;
+  // Application-level keepalive: browsers throttle timers in BACKGROUND tabs and
+  // idle sockets get reaped by proxies/NAT. We ping actively and reconnect on any
+  // close (clean or not), because an idle-timeout close often looks "clean".
+  private deliberateDisconnect = false;
+  private keepAliveTimer: any = null;
+  private pongWatchdog: any = null;
+  private readonly KEEPALIVE_MS = 20000;
+  private readonly PONG_TIMEOUT_MS = 10000;
   private activeConnectionType: 'websocket' | 'webrtc' | null = null;
 
   constructor(private config: BridgeConfig) {
@@ -38,6 +46,7 @@ export class SocketBridge {
     }
 
     this.connectionState = CONNECTION_STATES.CONNECTING;
+    this.deliberateDisconnect = false;
     this.log('Connecting to MCP server...');
 
     // Determine connection type
@@ -118,6 +127,7 @@ export class SocketBridge {
           clearTimeout(connectTimeout);
           this.connectionState = CONNECTION_STATES.CONNECTED;
           this.reconnectAttempts = 0;
+          this.startKeepAlive();
           this.log('Connected to MCP server via WebSocket');
           this.setupEventHandlers();
           resolve();
@@ -137,11 +147,18 @@ export class SocketBridge {
         };
 
         this.ws.onclose = event => {
-          this.log(`Disconnected: ${event.reason || 'Connection closed'}`);
+          this.log(
+            `Disconnected: ${event.reason || 'Connection closed'} ` +
+              `(code ${event.code}, wasClean=${event.wasClean})`
+          );
           this.connectionState = CONNECTION_STATES.DISCONNECTED;
+          this.stopKeepAlive();
 
-          if (event.wasClean) {
-            // Clean disconnect, don't reconnect
+          // Only a DELIBERATE local disconnect suppresses reconnection. An idle
+          // timeout from a proxy/NAT frequently reports wasClean=true, so trusting
+          // wasClean alone leaves the bridge dead until the tab is reloaded.
+          if (this.deliberateDisconnect) {
+            this.log('Deliberate disconnect; not reconnecting.');
             return;
           }
 
@@ -157,6 +174,8 @@ export class SocketBridge {
   }
 
   disconnect(): void {
+    this.deliberateDisconnect = true;
+    this.stopKeepAlive();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -200,6 +219,12 @@ export class SocketBridge {
             data: response,
           });
         });
+      } else if (message.type === 'pong') {
+        // Reply to our own keepalive ping: connection is alive.
+        if (this.pongWatchdog) {
+          clearTimeout(this.pongWatchdog);
+          this.pongWatchdog = null;
+        }
       } else if (message.type === 'ping') {
         this.sendMessage({
           type: 'pong',
@@ -472,6 +497,55 @@ export class SocketBridge {
         // Connection failed, scheduleReconnect will be called again from connect()
       }
     }, delay);
+  }
+
+  /** Actively ping the server; if no pong arrives, force a reconnect. This both
+   * keeps idle sockets warm and detects silently-dead connections (which the
+   * readyState-only heartbeat cannot). */
+  private startKeepAlive(): void {
+    this.stopKeepAlive();
+    this.keepAliveTimer = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      try {
+        this.sendMessage({ type: 'ping', id: `ka-${Date.now()}`, data: { keepalive: true } });
+      } catch (e) {
+        this.log(`Keepalive send failed: ${e}`);
+        this.forceReconnect();
+        return;
+      }
+      if (this.pongWatchdog) clearTimeout(this.pongWatchdog);
+      this.pongWatchdog = setTimeout(() => {
+        this.log('Keepalive: no pong received; connection is stale. Reconnecting.');
+        this.forceReconnect();
+      }, this.PONG_TIMEOUT_MS);
+    }, this.KEEPALIVE_MS);
+  }
+
+  private stopKeepAlive(): void {
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+    if (this.pongWatchdog) {
+      clearTimeout(this.pongWatchdog);
+      this.pongWatchdog = null;
+    }
+  }
+
+  /** Tear down a stale socket and reconnect. */
+  private forceReconnect(): void {
+    this.stopKeepAlive();
+    if (this.ws) {
+      try {
+        this.ws.onclose = null as any;
+        this.ws.close();
+      } catch (_e) {
+        /* ignore */
+      }
+      this.ws = null;
+    }
+    this.connectionState = CONNECTION_STATES.DISCONNECTED;
+    this.scheduleReconnect();
   }
 
   private sendMessage(message: any): void {

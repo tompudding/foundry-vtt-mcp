@@ -191,6 +191,24 @@ export class ModuleSettings {
     // SECTION 1: BASIC SETTINGS
     // ============================================================================
 
+    game.settings.register(this.moduleId, 'allowCombatWrites', {
+      name: 'Allow Combat Writes',
+      hint: 'Permit the MCP client to apply damage and healing to tokens, even while general write operations are disabled. No other writes are enabled by this setting.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: false,
+    });
+
+    game.settings.register(this.moduleId, 'allowIdentificationWrites', {
+      name: 'Allow Identification Writes',
+      hint: 'Permit the MCP client to change item identification (mystify/identify) even while general write operations are disabled. No other writes are enabled by this setting.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: false,
+    });
+
     game.settings.register(this.moduleId, 'enabled', {
       name: 'Enable MCP Bridge',
       hint: 'Master switch to enable/disable the MCP bridge connection',

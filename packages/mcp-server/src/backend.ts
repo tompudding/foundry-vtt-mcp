@@ -1569,6 +1569,41 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'get-token-state':
+                  result = await sceneTools.handleGetTokenState(args);
+
+                  break;
+
+                case 'get-token-distances':
+                  result = await sceneTools.handleGetTokenDistances(args);
+
+                  break;
+
+                case 'apply-damage':
+                  result = await sceneTools.handleApplyDamage(args);
+
+                  break;
+
+                case 'get-scene-walls':
+                  result = await sceneTools.handleGetSceneWalls(args);
+
+                  break;
+
+                case 'get-line-of-sight':
+                  result = await sceneTools.handleGetLineOfSight(args);
+
+                  break;
+
+                case 'get-item-identification':
+                  result = await sceneTools.handleGetItemIdentification(args);
+
+                  break;
+
+                case 'set-item-identification':
+                  result = await sceneTools.handleSetItemIdentification(args);
+
+                  break;
+
                 // Actor creation tools
 
                 case 'create-actor-from-compendium':

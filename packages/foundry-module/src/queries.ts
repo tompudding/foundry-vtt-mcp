@@ -31,6 +31,13 @@ export class QueryHandlers {
     // Character/Actor queries
     CONFIG.queries[`${modulePrefix}.getCharacterInfo`] = this.handleGetCharacterInfo.bind(this);
     CONFIG.queries[`${modulePrefix}.listActors`] = this.handleListActors.bind(this);
+    CONFIG.queries[`${modulePrefix}.getTokenState`] = this.handleGetTokenState.bind(this);
+    CONFIG.queries[`${modulePrefix}.getTokenDistances`] = this.handleGetTokenDistances.bind(this);
+    CONFIG.queries[`${modulePrefix}.applyTokenDamage`] = this.handleApplyTokenDamage.bind(this);
+    CONFIG.queries[`${modulePrefix}.getSceneWalls`] = this.handleGetSceneWalls.bind(this);
+    CONFIG.queries[`${modulePrefix}.getLineOfSight`] = this.handleGetLineOfSight.bind(this);
+    CONFIG.queries[`${modulePrefix}.getItemIdentification`] = this.handleGetItemIdentification.bind(this);
+    CONFIG.queries[`${modulePrefix}.setItemIdentification`] = this.handleSetItemIdentification.bind(this);
 
     // Compendium queries
     CONFIG.queries[`${modulePrefix}.searchCompendium`] = this.handleSearchCompendium.bind(this);
@@ -215,6 +222,155 @@ export class QueryHandlers {
   /**
    * Handle list actors request
    */
+  private async handleGetTokenState(data: {
+    tokenId?: string;
+    tokenName?: string;
+    x?: number;
+    y?: number;
+    all?: boolean;
+    selected?: boolean;
+    targeted?: boolean;
+  }): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getTokenState(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to get token state: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleGetTokenDistances(data: {
+    tokenId?: string;
+    tokenName?: string;
+    selected?: boolean;
+    targeted?: boolean;
+    rangeFeet?: number;
+    reachFeet?: number;
+    includeHidden?: boolean;
+  }): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getTokenDistances(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to measure token distances: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleGetItemIdentification(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getItemIdentification(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to get item identification: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleSetItemIdentification(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      // Scoped write permission: independent of the global write toggle
+      let allowed = false;
+      try {
+        allowed = !!(game as any).settings.get('foundry-mcp-bridge', 'allowIdentificationWrites');
+      } catch (_e) {
+        allowed = false;
+      }
+      if (!allowed) {
+        return {
+          error: 'Identification writes are disabled. Enable "Allow Identification Writes" in the Foundry MCP Bridge module settings.',
+          success: false,
+        };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.setItemIdentification(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to set item identification: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleApplyTokenDamage(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      // Scoped write permission, mirroring identification writes
+      let allowed = false;
+      try {
+        allowed = !!(game as any).settings.get('foundry-mcp-bridge', 'allowCombatWrites');
+      } catch (_e) {
+        allowed = false;
+      }
+      if (!allowed) {
+        return {
+          error: 'Combat writes are disabled. Enable "Allow Combat Writes" in the Foundry MCP Bridge module settings.',
+          success: false,
+        };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.applyTokenDamage(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to apply damage: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleGetSceneWalls(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getSceneWalls(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to get scene walls: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleGetLineOfSight(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getLineOfSight(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to compute line of sight: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
   private async handleListActors(data: { type?: string }): Promise<any> {
     try {
       // SECURITY: Silent GM validation

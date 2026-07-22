@@ -3569,6 +3569,740 @@ export class FoundryDataAccess {
   /**
    * Get world information
    */
+
+  /**
+   * Get live state (HP, conditions, effects) of scene tokens via their
+   * SYNTHETIC actors (token.actor), so unlinked tokens report their own
+   * deltas rather than the world actor's base sheet.
+   */
+  async getTokenState(data: {
+    tokenId?: string;
+    tokenName?: string;
+    x?: number;
+    y?: number;
+    all?: boolean;
+    selected?: boolean;
+    targeted?: boolean;
+  }): Promise<any> {
+    const scene: any = (game as any).scenes?.active;
+    if (!scene) throw new Error('No active scene');
+    const tokens: any[] = Array.from(scene.tokens ?? []);
+    if (tokens.length === 0) throw new Error('No tokens on the active scene');
+
+    const describe = (t: any) => {
+      const actor: any = t.actor; // synthetic (delta-applied) actor for unlinked tokens
+      if (!actor) {
+        return { tokenId: t.id, name: t.name, x: t.x, y: t.y, error: 'Token has no actor' };
+      }
+      // PF2e stores conditions as embedded items with badge values
+      const pf2Conditions = (actor.itemTypes?.condition ?? []).map((c: any) => ({
+        name: c.name,
+        value: c.system?.value?.value ?? null,
+      }));
+      const effects = (actor.effects?.contents ?? []).map((e: any) => ({
+        name: e.name ?? e.label,
+        disabled: !!e.disabled,
+      }));
+      const statuses = actor.statuses ? Array.from(actor.statuses) : [];
+      const hp = actor.system?.attributes?.hp;
+      // Immunities / weaknesses / resistances from the prepared actor. Each
+      // entry has type, optional value, optional exceptions; label (when the
+      // system provides it) is the human-readable form, e.g. "cold-iron 3".
+      const iwr = (list: any) =>
+        Array.from(list ?? []).map((e: any) => {
+          const entry: any = { type: e.type };
+          if (e.value != null) entry.value = e.value;
+          if (e.exceptions?.length) entry.exceptions = e.exceptions.map((x: any) => `${x}`);
+          if (e.doubleVs?.length) entry.doubleVs = e.doubleVs.map((x: any) => `${x}`);
+          try {
+            if (typeof e.label === 'string') entry.label = e.label;
+          } catch (_err) {
+            /* label getter can throw off-canvas; ignore */
+          }
+          return entry;
+        });
+      // Movement speeds: land at attrs.speed.value, others in otherSpeeds[]
+      const readSpeeds = (sp: any) => {
+        if (!sp) return null;
+        const out: Record<string, number> = {};
+        if (typeof sp.value === 'number') out.land = sp.value;
+        if (typeof sp.total === 'number') out.land = sp.total;
+        for (const o of sp.otherSpeeds ?? []) {
+          if (o?.type) out[o.type] = o.total ?? o.value;
+        }
+        return out;
+      };
+      const attrs = actor.system?.attributes ?? {};
+      return {
+        tokenId: t.id,
+        name: t.name,
+        x: t.x,
+        y: t.y,
+        elevation: t.elevation ?? 0,
+        size: { width: t.width, height: t.height },
+        hidden: !!t.hidden,
+        actorLink: !!t.actorLink,
+        worldActorId: t.actorId ?? null,
+        actorType: actor.type,
+        hp: hp ? { value: hp.value, max: hp.max, temp: hp.temp ?? 0 } : null,
+        ac: actor.system?.attributes?.ac?.value ?? null,
+        conditions: pf2Conditions,
+        statuses,
+        effects,
+        immunities: iwr(attrs.immunities),
+        weaknesses: iwr(attrs.weaknesses),
+        resistances: iwr(attrs.resistances),
+        speeds: readSpeeds(attrs.speed),
+        perceptionMod: attrs.perception?.value ?? actor.system?.perception?.mod ?? null,
+        level: actor.system?.details?.level?.value ?? null,
+        sizeCategory: actor.system?.traits?.size?.value ?? null,
+        creatureTraits: actor.system?.traits?.value ?? [],
+        saves: actor.saves
+          ? Object.fromEntries(
+              ['fortitude', 'reflex', 'will']
+                .filter(k => actor.saves[k])
+                .map(k => [k, actor.saves[k].mod])
+            )
+          : undefined,
+      };
+    };
+
+    if (data.selected) {
+      // Tokens currently selected (controlled) on the GM's canvas
+      const controlled: any[] = (typeof canvas !== 'undefined'
+        ? ((canvas as any)?.tokens?.controlled ?? [])
+        : []
+      ).map((p: any) => p.document ?? p);
+      if (controlled.length === 0) {
+        throw new Error('No tokens are selected on the canvas');
+      }
+      return controlled.length === 1
+        ? describe(controlled[0])
+        : { tokens: controlled.map(describe) };
+    }
+
+    if (data.targeted) {
+      // Tokens currently targeted (reticle) by the GM user
+      const targets: any[] = Array.from((game as any).user?.targets ?? []).map(
+        (p: any) => p.document ?? p
+      );
+      if (targets.length === 0) {
+        throw new Error('No tokens are targeted by the GM user');
+      }
+      return targets.length === 1 ? describe(targets[0]) : { tokens: targets.map(describe) };
+    }
+
+    if (data.all) {
+      return { tokens: tokens.map(describe) };
+    }
+
+    let matches: any[] = [];
+    if (data.tokenId) {
+      matches = tokens.filter(t => t.id === data.tokenId);
+    } else if (data.tokenName) {
+      const q = data.tokenName.toLowerCase();
+      matches = tokens.filter(t => (t.name ?? '').toLowerCase() === q);
+      if (matches.length === 0) {
+        matches = tokens.filter(t => (t.name ?? '').toLowerCase().includes(q));
+      }
+    } else if (typeof data.x === 'number' && typeof data.y === 'number') {
+      let best = Infinity;
+      let bestToken: any = null;
+      for (const t of tokens) {
+        const d = Math.hypot((t.x ?? 0) - (data.x as number), (t.y ?? 0) - (data.y as number));
+        if (d < best) {
+          best = d;
+          bestToken = t;
+        }
+      }
+      if (bestToken) matches = [bestToken];
+    } else {
+      throw new Error('Provide tokenId, tokenName, x/y coordinates, selected/targeted: true, or all: true');
+    }
+
+    if (matches.length === 0) throw new Error('No matching token on the active scene');
+    if (matches.length > 1) {
+      return {
+        ambiguous: true,
+        message: 'Multiple tokens match; re-query with tokenId or x/y.',
+        candidates: matches.map(t => ({ tokenId: t.id, name: t.name, x: t.x, y: t.y })),
+      };
+    }
+    return describe(matches[0]);
+  }
+
+
+  /**
+   * Measure grid distances from an origin token to other tokens using the
+   * SYSTEM's own metric (PF2e Token#distanceTo: closest occupied squares,
+   * alternating diagonals, elevation-aware) so results always match the
+   * GM's in-app ruler. Falls back to core measurePath, then to a manual
+   * alternating-diagonal formula on non-supporting systems.
+   */
+  async getTokenDistances(data: {
+    tokenId?: string;
+    tokenName?: string;
+    selected?: boolean;
+    targeted?: boolean;
+    rangeFeet?: number;
+    reachFeet?: number;
+    includeHidden?: boolean;
+  }): Promise<any> {
+    const cv: any = typeof canvas !== 'undefined' ? (canvas as any) : null;
+    if (!cv?.ready || !cv.scene) throw new Error('Canvas is not ready');
+    const docs: any[] = Array.from(cv.scene.tokens ?? []);
+    if (docs.length === 0) throw new Error('No tokens on the viewed scene');
+
+    // Resolve origin token document
+    let origin: any | undefined;
+    if (data.selected) {
+      const controlled = cv.tokens?.controlled ?? [];
+      if (controlled.length !== 1) {
+        throw new Error(
+          controlled.length === 0
+            ? 'No token selected on the canvas'
+            : 'Multiple tokens selected; select exactly one origin token'
+        );
+      }
+      origin = controlled[0].document;
+    } else if (data.targeted) {
+      const targets = Array.from((game as any).user?.targets ?? []);
+      if (targets.length !== 1) {
+        throw new Error(
+          targets.length === 0
+            ? 'No token targeted'
+            : 'Multiple tokens targeted; target exactly one origin token'
+        );
+      }
+      origin = (targets[0] as any).document;
+    } else if (data.tokenId) {
+      origin = docs.find(t => t.id === data.tokenId);
+    } else if (data.tokenName) {
+      const q = data.tokenName.toLowerCase();
+      origin =
+        docs.find(t => (t.name ?? '').toLowerCase() === q) ??
+        docs.find(t => (t.name ?? '').toLowerCase().includes(q));
+    } else {
+      throw new Error('Provide tokenId, tokenName, selected: true, or targeted: true for the origin');
+    }
+    if (!origin) throw new Error('Origin token not found on the viewed scene');
+    const originObj: any = origin.object;
+
+    const manualMeasure = (a: any, b: any): number => {
+      const gs = cv.scene.grid.size || 1;
+      const gd = cv.scene.grid.distance || 5;
+      const dx = Math.abs((a.x ?? 0) - (b.x ?? 0)) / gs;
+      const dy = Math.abs((a.y ?? 0) - (b.y ?? 0)) / gs;
+      const lo = Math.min(dx, dy);
+      const hi = Math.max(dx, dy);
+      return Math.round((hi + Math.floor(lo / 2)) * gd);
+    };
+
+    const measure = (targetDoc: any): { distance: number | null; method: string } => {
+      const targetObj: any = targetDoc.object;
+      // 1. System metric (PF2e distanceTo) — matches the in-app ruler exactly
+      if (originObj && targetObj && typeof originObj.distanceTo === 'function') {
+        try {
+          const opts = data.reachFeet != null ? { reach: data.reachFeet } : {};
+          return { distance: originObj.distanceTo(targetObj, opts), method: 'system' };
+        } catch (_e) {
+          /* fall through */
+        }
+      }
+      // 2. Core grid path measurement, center to center
+      if (originObj && targetObj && cv.grid?.measurePath) {
+        try {
+          const wp = [
+            { x: originObj.center?.x ?? originObj.x, y: originObj.center?.y ?? originObj.y },
+            { x: targetObj.center?.x ?? targetObj.x, y: targetObj.center?.y ?? targetObj.y },
+          ];
+          return { distance: Math.round(cv.grid.measurePath(wp).distance), method: 'core' };
+        } catch (_e) {
+          /* fall through */
+        }
+      }
+      // 3. Manual alternating-diagonal fallback on document coordinates
+      return { distance: manualMeasure(origin, targetDoc), method: 'manual' };
+    };
+
+    const results = docs
+      .filter(t => t.id !== origin!.id && (data.includeHidden || !t.hidden))
+      .map(t => {
+        const m = measure(t);
+        const entry: any = {
+          tokenId: t.id,
+          name: t.name,
+          disposition: this.getTokenDisposition(t.disposition),
+          hidden: !!t.hidden,
+          elevation: t.elevation ?? 0,
+          distance: m.distance,
+          method: m.method,
+        };
+        if (data.rangeFeet != null && m.distance != null) {
+          entry.inRange = m.distance <= data.rangeFeet;
+        }
+        return entry;
+      })
+      .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+
+    return {
+      origin: { tokenId: origin.id, name: origin.name, elevation: origin.elevation ?? 0 },
+      unit: cv.scene.grid.units || 'ft',
+      rangeFeet: data.rangeFeet ?? null,
+      distances: results,
+    };
+  }
+
+
+  /** Standard level-based DCs (Player Core GM tools); pwol subtracts level. */
+  private identifyBaseDC(level: number, pwol: boolean): number {
+    const table = [14,15,16,18,19,20,22,23,24,26,27,28,30,31,32,34,35,36,38,39,40,42,44,46,48,50];
+    const lv = Math.max(0, Math.min(25, level ?? 0));
+    return table[lv] - (pwol ? lv : 0);
+  }
+
+  private identifyDCs(item: any): { dcs: Record<string, number>; cursed: boolean } {
+    let pwol = false;
+    let mismatch = 5;
+    try {
+      pwol = (game as any).settings.get('pf2e', 'proficiencyVariant') === true
+        || (game as any).settings.get('pf2e', 'proficiencyVariant') === 'ProficiencyWithoutLevel';
+    } catch (_e) { /* default */ }
+    try {
+      mismatch = Number((game as any).settings.get('pf2e', 'identifyMagicNotMatchingTraditionModifier')) || 5;
+    } catch (_e) { /* default */ }
+    const cursed = item.traits?.has?.('cursed') ?? false;
+    const rarity: string = cursed ? 'unique' : (item.rarity ?? 'common');
+    const rarityAdj: Record<string, number> = { common: 0, uncommon: 2, rare: 5, unique: 10 };
+    const dc = this.identifyBaseDC(item.level ?? 0, pwol) + (rarityAdj[rarity] ?? 0);
+    if (item.isMagical) {
+      // tradition -> identifying skill; non-matching traditions are harder
+      const traditionSkill: Record<string, string> = {
+        arcane: 'arcana', divine: 'religion', occult: 'occultism', primal: 'nature',
+      };
+      const traits: string[] = item.system?.traits?.value ?? [];
+      const present = Object.keys(traditionSkill).filter(t => traits.includes(t));
+      const dcs: Record<string, number> = {};
+      for (const [trad, skill] of Object.entries(traditionSkill)) {
+        dcs[skill] = present.length > 0 && !present.includes(trad) ? dc + mismatch : dc;
+      }
+      return { dcs, cursed };
+    }
+    return { dcs: { crafting: dc }, cursed };
+  }
+
+  /** PC-side actor: player-owned, or (solo worlds have no player users) a
+   * character/party/familiar by type. */
+  private isPartyActor(actor: any): boolean {
+    if (actor.hasPlayerOwner) return true;
+    return ['character', 'party', 'familiar'].includes(actor.type);
+  }
+
+  private collectIdentifiableActors(data: { allScenes?: boolean; includePlayerOwned?: boolean }): any[] {
+    const actors = new Map<string, any>();
+    const scenes: any[] = data.allScenes
+      ? Array.from((game as any).scenes ?? [])
+      : [typeof canvas !== 'undefined' ? (canvas as any)?.scene : null].filter(Boolean);
+    for (const scene of scenes) {
+      for (const tokenDoc of Array.from((scene as any).tokens ?? []) as any[]) {
+        const actor: any = tokenDoc.actor;
+        if (!actor) continue;
+        if (!data.includePlayerOwned && this.isPartyActor(actor)) continue;
+        actors.set(actor.uuid, actor);
+      }
+    }
+    if (data.allScenes) {
+      for (const actor of Array.from((game as any).actors ?? []) as any[]) {
+        if (!data.includePlayerOwned && this.isPartyActor(actor as any)) continue;
+        actors.set((actor as any).uuid, actor);
+      }
+    }
+    return Array.from(actors.values());
+  }
+
+  /**
+   * List identifiable (magical/alchemical) physical items with their
+   * mystification status and identify-check DCs. GM-side: trueName is the
+   * real item name even while mystified — do not reveal it to players.
+   */
+  async getItemIdentification(data: {
+    selected?: boolean;
+    tokenId?: string;
+    tokenName?: string;
+    allScenes?: boolean;
+    includePlayerOwned?: boolean;
+    onlyMystified?: boolean;
+  }): Promise<any> {
+    let actors: any[];
+    if (data.selected || data.tokenId || data.tokenName) {
+      // Build args without present-but-undefined keys (exactOptionalPropertyTypes)
+      const lookup: { selected?: boolean; tokenId?: string; tokenName?: string } = {};
+      if (data.selected) lookup.selected = true;
+      if (data.tokenId) lookup.tokenId = data.tokenId;
+      if (data.tokenName) lookup.tokenName = data.tokenName;
+      const state = await this.getTokenState(lookup);
+      const ids: string[] = state.tokens ? state.tokens.map((t: any) => t.tokenId) : [state.tokenId];
+      const scene: any = typeof canvas !== 'undefined' ? (canvas as any)?.scene : null;
+      actors = ids.map(id => scene?.tokens?.get(id)?.actor).filter(Boolean);
+    } else {
+      actors = this.collectIdentifiableActors(data);
+    }
+    const results: any[] = [];
+    for (const actor of actors) {
+      for (const item of Array.from(actor.items ?? []) as any[]) {
+        const it: any = item;
+        if (!it.system?.identification) continue; // not a physical item
+        if (!(it.isMagical || it.isAlchemical)) continue;
+        const status = it.system.identification.status;
+        if (data.onlyMystified && status !== 'unidentified') continue;
+        const { dcs, cursed } = this.identifyDCs(it);
+        results.push({
+          itemUuid: it.uuid,
+          // Prepared `name` is swapped to the mystified name while unidentified;
+          // the real name lives untouched in source data.
+          trueName: it._source?.name ?? it.name, // GM-only knowledge while mystified
+          displayedName: status === 'unidentified'
+            ? (it.name || it.system.identification.unidentified?.name || 'Unusual item')
+            : it.name,
+          status,
+          owner: actor.name,
+          level: it.level ?? 0,
+          rarity: cursed ? 'unique (cursed)' : (it.rarity ?? 'common'),
+          magical: !!it.isMagical,
+          alchemical: !!it.isAlchemical,
+          identifyDCs: dcs,
+        });
+      }
+    }
+    return { count: results.length, items: results };
+  }
+
+  /**
+   * Change item identification status via the SYSTEM's own method.
+   * action 'identify' | 'mystify' operate on itemUuid; 'mystify-all' bulk-
+   * mystifies every identified magical/alchemical item (player-owned actors
+   * excluded unless includePlayerOwned).
+   */
+  async setItemIdentification(data: {
+    action: 'identify' | 'mystify' | 'mystify-all';
+    itemUuid?: string;
+    allScenes?: boolean;
+    includePlayerOwned?: boolean;
+    postChat?: boolean;
+  }): Promise<any> {
+    if (data.action === 'mystify-all') {
+      const actors = this.collectIdentifiableActors(data);
+      const changed: string[] = [];
+      for (const actor of actors) {
+        for (const item of Array.from(actor.items ?? []) as any[]) {
+          const it: any = item;
+          if (!it.system?.identification) continue;
+          if (!(it.isMagical || it.isAlchemical)) continue;
+          if (it.system.identification.status !== 'identified') continue;
+          if (typeof it.setIdentificationStatus === 'function') {
+            await it.setIdentificationStatus('unidentified');
+          } else {
+            await it.update({ 'system.identification.status': 'unidentified' });
+          }
+          changed.push(`${it.name} (${actor.name})`);
+        }
+      }
+      return { action: 'mystify-all', count: changed.length, items: changed };
+    }
+
+    if (!data.itemUuid) throw new Error('itemUuid is required for identify/mystify');
+    const item: any = await (globalThis as any).fromUuid(data.itemUuid);
+    if (!item) throw new Error(`Item not found for uuid: ${data.itemUuid}`);
+    const status = data.action === 'identify' ? 'identified' : 'unidentified';
+    if (typeof item.setIdentificationStatus === 'function') {
+      await item.setIdentificationStatus(status);
+    } else {
+      await item.update({ 'system.identification.status': status });
+    }
+    if (data.action === 'identify' && data.postChat !== false) {
+      const img = item.img ? `<img src="${item.img}" width="36" height="36" style="vertical-align:middle;border:none;margin-right:6px;"/>` : '';
+      await (globalThis as any).ChatMessage.create({
+        content: `<div class="pf2e chat-card">${img}<strong>Item identified:</strong> ${item.name}</div>`,
+        speaker: { alias: 'Identification' },
+      });
+    }
+    return { action: data.action, itemUuid: item.uuid, name: item.name, status };
+  }
+
+
+  /**
+   * Apply damage or healing to a token's SYNTHETIC actor through the game
+   * system's own damage pipeline (PF2e: resistances, weaknesses, hardness,
+   * temp HP, and immunities all handled). Positive amount = damage,
+   * negative = healing. skipIWR / raw force plain HP arithmetic.
+   */
+  async applyTokenDamage(data: {
+    tokenId?: string;
+    tokenName?: string;
+    selected?: boolean;
+    targeted?: boolean;
+    amount: number;
+    healing?: boolean;
+    skipIWR?: boolean;
+    raw?: boolean;
+  }): Promise<any> {
+    // Resolve the target token document(s) by reusing getTokenState's matcher
+    const lookup: { selected?: boolean; targeted?: boolean; tokenId?: string; tokenName?: string } = {};
+    if (data.selected) lookup.selected = true;
+    if (data.targeted) lookup.targeted = true;
+    if (data.tokenId) lookup.tokenId = data.tokenId;
+    if (data.tokenName) lookup.tokenName = data.tokenName;
+    if (!Object.keys(lookup).length) {
+      throw new Error('Provide tokenId, tokenName, selected: true, or targeted: true');
+    }
+    const state = await this.getTokenState(lookup);
+    if (state.ambiguous) return state; // pass the disambiguation list straight back
+    const tokenIds: string[] = state.tokens ? state.tokens.map((t: any) => t.tokenId) : [state.tokenId];
+
+    const scene: any = typeof canvas !== 'undefined' ? (canvas as any)?.scene : null;
+    if (!scene) throw new Error('No active scene');
+
+    // Signed value: positive damages, negative heals
+    let value = Math.trunc(Math.abs(data.amount));
+    if (data.healing) value = -value;
+    else if (data.amount < 0) value = data.amount; // caller passed a signed value
+
+    const results: any[] = [];
+    for (const id of tokenIds) {
+      const tokenDoc: any = scene.tokens?.get(id);
+      const actor: any = tokenDoc?.actor;
+      if (!actor) {
+        results.push({ tokenId: id, error: 'Token has no actor' });
+        continue;
+      }
+      const hpBefore = actor.system?.attributes?.hp?.value ?? null;
+      let method = 'raw';
+      try {
+        if (!data.raw && typeof actor.applyDamage === 'function') {
+          // PF2e signed-value path: runs IWR unless skipIWR/healing-final
+          await actor.applyDamage({
+            damage: value,
+            token: tokenDoc,
+            skipIWR: data.skipIWR ?? false,
+            final: data.raw ?? false,
+          });
+          method = data.skipIWR ? 'system (no IWR)' : 'system';
+        } else {
+          // Generic fallback: clamp to [0, max], respect temp HP on damage
+          const hp = actor.system.attributes.hp;
+          let remaining = value;
+          let temp = hp.temp ?? 0;
+          let newTemp = temp;
+          if (remaining > 0 && temp > 0) {
+            const absorbed = Math.min(temp, remaining);
+            newTemp = temp - absorbed;
+            remaining -= absorbed;
+          }
+          const newValue = Math.max(0, Math.min(hp.max, hp.value - remaining));
+          await actor.update({
+            'system.attributes.hp.value': newValue,
+            'system.attributes.hp.temp': newTemp,
+          });
+        }
+      } catch (e) {
+        results.push({ tokenId: id, name: tokenDoc.name, error: `${e}` });
+        continue;
+      }
+      const fresh: any = scene.tokens?.get(id)?.actor;
+      const hpAfter = fresh?.system?.attributes?.hp?.value ?? null;
+      results.push({
+        tokenId: id,
+        name: tokenDoc.name,
+        applied: data.healing || value < 0 ? 'healing' : 'damage',
+        requestedAmount: Math.abs(data.amount),
+        method,
+        hpBefore,
+        hpAfter,
+        hpMax: fresh?.system?.attributes?.hp?.max ?? null,
+        tempHp: fresh?.system?.attributes?.hp?.temp ?? 0,
+        defeated: hpAfter != null && hpAfter <= 0,
+      });
+    }
+    return results.length === 1 ? results[0] : { results };
+  }
+
+
+  /**
+   * Wall and door geometry for the active scene (line of sight, cover,
+   * chokepoints, openable doors). Coordinates are scene pixels; gx/gy are
+   * grid squares (pixel / grid.size).
+   */
+  async getSceneWalls(
+    data: {
+      doorsOnly?: boolean;
+      blocksSight?: boolean;
+      blocksMovement?: boolean;
+      includeInvisible?: boolean;
+    } = {}
+  ): Promise<any> {
+    const scene: any = (game as any).scenes?.current;
+    if (!scene) throw new Error('No active scene');
+    const gridSize = scene.grid?.size || 100;
+    const DOOR = ['wall', 'door', 'secret'];
+    const DOOR_STATE = ['closed', 'open', 'locked'];
+    const dirName = (d: number) => (['both', 'left', 'right'][d] ?? 'both');
+    const walls: any[] = [];
+    const doors: any[] = [];
+    for (const w of Array.from(scene.walls ?? []) as any[]) {
+      const c = w.c ?? w._source?.c ?? [];
+      const isDoor = (w.door ?? 0) > 0;
+      const doorOpen = isDoor && (w.ds ?? 0) === 1;
+      const blocksMove = (w.move ?? 1) !== 0;
+      // An OPEN door blocks neither sight nor movement regardless of its flags.
+      const blocksSight = !doorOpen && (w.sight ?? 1) !== 0;
+      // "Invisible" walls block movement but not sight (sight sense = none).
+      const invisible = (w.sight ?? 1) === 0 && blocksMove;
+
+      if (data.doorsOnly && !isDoor) continue;
+      if (data.blocksSight === true && !blocksSight) continue;
+      if (data.blocksSight === false && blocksSight) continue;
+      if (data.blocksMovement === true && !blocksMove) continue;
+      if (data.blocksMovement === false && blocksMove) continue;
+      if (!data.includeInvisible && invisible && data.blocksSight !== false) {
+        // by default keep them, but tag; only skip if caller explicitly wants sight-blockers
+      }
+
+      const entry: any = {
+        id: w.id,
+        from: { x: c[0], y: c[1], gx: +(c[0] / gridSize).toFixed(2), gy: +(c[1] / gridSize).toFixed(2) },
+        to: { x: c[2], y: c[3], gx: +(c[2] / gridSize).toFixed(2), gy: +(c[3] / gridSize).toFixed(2) },
+        blocksMove,
+        blocksSight,
+        invisible,
+        direction: dirName(w.dir ?? 0),
+      };
+      if (isDoor) {
+        entry.door = DOOR[w.door] ?? 'door';
+        entry.state = DOOR_STATE[w.ds ?? 0] ?? 'closed';
+        entry.passableNow = entry.state === 'open';
+        doors.push(entry);
+      }
+      walls.push(entry);
+    }
+    return {
+      scene: scene.name,
+      gridSize,
+      unit: scene.grid?.units || 'ft',
+      unitsPerSquare: scene.grid?.distance ?? 5,
+      wallCount: walls.length,
+      doorCount: doors.length,
+      doors,
+      walls: data.doorsOnly ? undefined : walls,
+    };
+  }
+
+
+  /**
+   * Corner-to-corner line of sight between two tokens. Casts rays from each of
+   * the source token's 4 corners to each of the target's 4 corners (16 rays)
+   * and tests them against sight-blocking walls (open doors don't block).
+   *   - any corner with all 4 rays clear -> "clear"
+   *   - all 16 rays blocked             -> "blocked"
+   *   - otherwise                        -> "cover"
+   * This mirrors how PF2e adjudicates lesser/standard cover from corners.
+   */
+  async getLineOfSight(data: {
+    sourceTokenId?: string;
+    sourceTokenName?: string;
+    sourceSelected?: boolean;
+    targetTokenId?: string;
+    targetTokenName?: string;
+    targetTargeted?: boolean;
+  }): Promise<any> {
+    const scene: any = (game as any).scenes?.current;
+    if (!scene) throw new Error('No active scene');
+    const gridSize = scene.grid?.size || 100;
+    const docs: any[] = Array.from(scene.tokens ?? []);
+
+    const resolve = (id?: string, name?: string, sel?: boolean, tgt?: boolean, which = ''): any => {
+      const cv: any = typeof canvas !== 'undefined' ? (canvas as any) : null;
+      if (sel) {
+        const c = cv?.tokens?.controlled ?? [];
+        if (c.length !== 1) throw new Error(`Select exactly one ${which} token`);
+        return c[0].document;
+      }
+      if (tgt) {
+        const t = Array.from((game as any).user?.targets ?? []);
+        if (t.length !== 1) throw new Error(`Target exactly one ${which} token`);
+        return (t[0] as any).document;
+      }
+      if (id) return docs.find(t => t.id === id);
+      if (name) {
+        const q = name.toLowerCase();
+        return docs.find(t => (t.name ?? '').toLowerCase() === q)
+          ?? docs.find(t => (t.name ?? '').toLowerCase().includes(q));
+      }
+      throw new Error(`Provide a ${which} token (id, name, selected/targeted)`);
+    };
+
+    const src = resolve(data.sourceTokenId, data.sourceTokenName, data.sourceSelected, false, 'source');
+    const tgt = resolve(data.targetTokenId, data.targetTokenName, false, data.targetTargeted, 'target');
+    if (!src || !tgt) throw new Error('Source or target token not found');
+
+    // token corners (inset slightly so edge-touching walls don't false-block)
+    const inset = gridSize * 0.05;
+    const corners = (t: any) => {
+      const x0 = t.x + inset, y0 = t.y + inset;
+      const x1 = t.x + t.width * gridSize - inset, y1 = t.y + t.height * gridSize - inset;
+      return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x0, y: y1 }, { x: x1, y: y1 }];
+    };
+
+    // sight-blocking walls only (open doors excluded)
+    const sightWalls = (Array.from(scene.walls ?? []) as any[])
+      .filter(w => {
+        const doorOpen = (w.door ?? 0) > 0 && (w.ds ?? 0) === 1;
+        return !doorOpen && (w.sight ?? 1) !== 0;
+      })
+      .map(w => (w.c ?? w._source?.c ?? []));
+
+    // segment intersection
+    const ccw = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) =>
+      (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
+    const intersects = (p1: any, p2: any, w: number[]) => {
+      const a = { x: w[0], y: w[1] }, b = { x: w[2], y: w[3] };
+      return (
+        ccw(p1.x, p1.y, a.x, a.y, b.x, b.y) !== ccw(p2.x, p2.y, a.x, a.y, b.x, b.y) &&
+        ccw(p1.x, p1.y, p2.x, p2.y, a.x, a.y) !== ccw(p1.x, p1.y, p2.x, p2.y, b.x, b.y)
+      );
+    };
+    const rayClear = (p1: any, p2: any) => !sightWalls.some(w => w.length >= 4 && intersects(p1, p2, w));
+
+    const sc = corners(src), tc = corners(tgt);
+    let clearRays = 0;
+    for (const s of sc) {
+      for (const t of tc) {
+        if (rayClear(s, t)) clearRays++;
+      }
+    }
+
+    // All 16 rays clear -> unobstructed; all blocked -> no LoS; between -> cover.
+    // (Matches the spec and PF2e's corner-based cover adjudication.)
+    let result: string;
+    if (clearRays === 16) result = 'clear';
+    else if (clearRays === 0) result = 'blocked';
+    else result = 'cover';
+
+    return {
+      source: { tokenId: src.id, name: src.name },
+      target: { tokenId: tgt.id, name: tgt.name },
+      lineOfSight: result,
+      clearRays,
+      totalRays: 16,
+      sightBlockingWalls: sightWalls.length,
+      note:
+        result === 'cover'
+          ? 'Some but not all corner-to-corner rays are clear: the target likely has cover (GM adjudicates lesser vs standard).'
+          : result === 'clear'
+            ? 'At least one source corner sees all target corners: unobstructed.'
+            : 'All 16 rays cross a sight-blocking wall: no line of sight.',
+    };
+  }
+
   async getWorldInfo(): Promise<WorldInfo> {
     // World info doesn't require special permissions as it's basic metadata
 
