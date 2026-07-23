@@ -275,6 +275,7 @@ export class QueryHandlers {
     all?: boolean;
     selected?: boolean;
     targeted?: boolean;
+    detail?: 'basic' | 'full';
   }): Promise<any> {
     try {
       // SECURITY: Silent GM validation
