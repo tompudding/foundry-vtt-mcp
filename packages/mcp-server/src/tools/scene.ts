@@ -143,7 +143,7 @@ export class SceneTools {
       {
         name: 'get-line-of-sight',
         description:
-          'Determine whether a source token can see a target token, using corner-to-corner ray casting (16 rays from the source\'s 4 corners to the target\'s 4 corners) against sight-blocking walls (open doors do not block). Returns "clear" (a source corner sees all target corners), "blocked" (all 16 rays hit a wall), or "cover" (in between — GM adjudicates lesser vs standard cover). Identify tokens by id, name, sourceSelected, or targetTargeted.',
+          'Determine whether a source token can see a target token, using corner-to-corner ray casting (16 rays from the source\'s 4 corners to the target\'s 4 corners) against sight-blocking walls (open doors do not block). Returns "clear" (at least one source corner has an unobstructed line to all four target corners — a creature can sight from anywhere in its space, so one clear corner means no cover), "blocked" (all 16 rays cross a wall), or "cover" (in between — GM adjudicates lesser vs standard). Multi-level scenes are respected: only walls on the SOURCE token\'s elevation band are considered, and tokens on different levels report blocked unless crossLevelSight is set. Identify tokens by id, name, sourceSelected, or targetTargeted.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -153,6 +153,8 @@ export class SceneTools {
             targetTokenId: { type: 'string' },
             targetTokenName: { type: 'string' },
             targetTargeted: { type: 'boolean', description: 'Use the targeted token as the target', default: false },
+            crossLevelSight: { type: 'boolean', description: 'For tokens on different levels, report the raw 2-D verdict instead of blocked (use for balconies/open galleries)', default: false },
+            ignoreLevels: { type: 'boolean', description: 'Disable multi-level filtering entirely and test against every sight-blocking wall in the scene', default: false },
           },
         },
       },
@@ -283,6 +285,8 @@ export class SceneTools {
       targetTokenId: z.string().optional(),
       targetTokenName: z.string().optional(),
       targetTargeted: z.boolean().default(false),
+      crossLevelSight: z.boolean().default(false),
+      ignoreLevels: z.boolean().default(false),
     });
     const params = schema.parse(args);
     this.logger.info('Computing line of sight', params);

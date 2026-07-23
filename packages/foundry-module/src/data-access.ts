@@ -4213,6 +4213,8 @@ export class FoundryDataAccess {
     targetTokenId?: string;
     targetTokenName?: string;
     targetTargeted?: boolean;
+    ignoreLevels?: boolean;
+    crossLevelSight?: boolean;
   }): Promise<any> {
     const scene: any = (game as any).scenes?.current;
     if (!scene) throw new Error('No active scene');
@@ -4252,13 +4254,47 @@ export class FoundryDataAccess {
       return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x0, y: y1 }, { x: x1, y: y1 }];
     };
 
-    // sight-blocking walls only (open doors excluded)
-    const sightWalls = (Array.from(scene.walls ?? []) as any[])
-      .filter(w => {
-        const doorOpen = (w.door ?? 0) > 0 && (w.ds ?? 0) === 1;
-        return !doorOpen && (w.sight ?? 1) !== 0;
-      })
-      .map(w => (w.c ?? w._source?.c ?? []));
+    // ---- Scene levels (Foundry v14 multi-level scenes) --------------------
+    // A level is a named elevation band {_id, name, elevation:{bottom, top}}.
+    // Walls carry a `levels` set of level ids; an EMPTY set means "all levels".
+    // Only walls on the SOURCE token's level can obstruct its view, otherwise
+    // rays collide with walls on other floors.
+    const sceneLevels: any[] = Array.from((scene as any).levels ?? []);
+    const levelOf = (elev: number): any => {
+      if (!sceneLevels.length) return null;
+      return (
+        sceneLevels.find(l => elev >= l.elevation?.bottom && elev < l.elevation?.top) ??
+        // top-inclusive fallback for a token resting exactly on a band boundary
+        sceneLevels.find(l => elev >= l.elevation?.bottom && elev <= l.elevation?.top) ??
+        null
+      );
+    };
+    const srcElev = src.elevation ?? 0;
+    const tgtElev = tgt.elevation ?? 0;
+    const srcLevel = levelOf(srcElev);
+    const tgtLevel = levelOf(tgtElev);
+
+    const wallLevelIds = (w: any): string[] => {
+      const l = w.levels;
+      if (!l) return [];
+      return Array.isArray(l) ? l.slice() : Array.from(l as Iterable<string>);
+    };
+    const wallOnSourceLevel = (w: any): boolean => {
+      if (data.ignoreLevels) return true;
+      if (!srcLevel) return true; // no levels configured: keep every wall
+      const ids = wallLevelIds(w);
+      if (ids.length === 0) return true; // untagged wall = present on all levels
+      return ids.includes(srcLevel._id);
+    };
+
+    // sight-blocking walls only (open doors excluded), restricted to the
+    // source token's level
+    const sightWallDocs = (Array.from(scene.walls ?? []) as any[]).filter(w => {
+      const doorOpen = (w.door ?? 0) > 0 && (w.ds ?? 0) === 1;
+      if (doorOpen || (w.sight ?? 1) === 0) return false;
+      return wallOnSourceLevel(w);
+    });
+    const sightWalls = sightWallDocs.map(w => (w.c ?? w._source?.c ?? []));
 
     // segment intersection
     const ccw = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) =>
@@ -4270,32 +4306,106 @@ export class FoundryDataAccess {
         ccw(p1.x, p1.y, p2.x, p2.y, a.x, a.y) !== ccw(p1.x, p1.y, p2.x, p2.y, b.x, b.y)
       );
     };
-    const rayClear = (p1: any, p2: any) => !sightWalls.some(w => w.length >= 4 && intersects(p1, p2, w));
-
     const sc = corners(src), tc = corners(tgt);
-    let clearRays = 0;
-    for (const s of sc) {
-      for (const t of tc) {
-        if (rayClear(s, t)) clearRays++;
-      }
+
+    // ---- DEBUG LOGGING (remove once verified) ----
+    const LOS_DEBUG = true;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    if (LOS_DEBUG) {
+      console.log(`[LoS] ${src.name} (${r2(src.x)},${r2(src.y)} ${src.width}x${src.height}) ` +
+        `-> ${tgt.name} (${r2(tgt.x)},${r2(tgt.y)} ${tgt.width}x${tgt.height}); gridSize=${gridSize}`);
+      console.log(`[LoS] source corners: ` +
+        sc.map((c, i) => `S${i}(${r2(c.x)},${r2(c.y)})`).join(' '));
+      console.log(`[LoS] target corners: ` +
+        tc.map((c, i) => `T${i}(${r2(c.x)},${r2(c.y)})`).join(' '));
+      const lvlName = (l: any, e: number) =>
+        l ? `${l.name} [${l.elevation?.bottom}-${l.elevation?.top}] @elev ${e}` : `none @elev ${e}`;
+      console.log(`[LoS] scene levels: ` +
+        (sceneLevels.length
+          ? sceneLevels.map(l => `${l.name}(${l.elevation?.bottom}-${l.elevation?.top})`).join(', ')
+          : '(none configured)'));
+      console.log(`[LoS] source level: ${lvlName(srcLevel, srcElev)}`);
+      console.log(`[LoS] target level: ${lvlName(tgtLevel, tgtElev)}`);
+      const totalSightWalls = (Array.from(scene.walls ?? []) as any[]).filter(w => {
+        const doorOpen = (w.door ?? 0) > 0 && (w.ds ?? 0) === 1;
+        return !doorOpen && (w.sight ?? 1) !== 0;
+      }).length;
+      console.log(`[LoS] ${sightWalls.length} sight-blocking wall(s) on the source level ` +
+        `(${totalSightWalls} in the whole scene${data.ignoreLevels ? '; level filter DISABLED' : ''}):`);
+      sightWallDocs.forEach((wd, i) => {
+        const w = sightWalls[i];
+        const ids = wallLevelIds(wd);
+        const tags = ids.length
+          ? ids.map(id => sceneLevels.find(l => l._id === id)?.name ?? id).join('+')
+          : 'all-levels';
+        console.log(`[LoS]   W${i}: (${r2(w[0])},${r2(w[1])})->(${r2(w[2])},${r2(w[3])}) [${tags}]`);
+      });
     }
 
-    // All 16 rays clear -> unobstructed; all blocked -> no LoS; between -> cover.
-    // (Matches the spec and PF2e's corner-based cover adjudication.)
+    let clearRays = 0;
+    let anyCornerFullyClear = false;
+    for (let si = 0; si < sc.length; si++) {
+      const s = sc[si];
+      let cornerClear = 0;
+      for (let ti = 0; ti < tc.length; ti++) {
+        const t = tc[ti];
+        const blockers = sightWalls
+          .map((w, wi) => ({ wi, w }))
+          .filter(({ w }) => w.length >= 4 && intersects(s, t, w));
+        const clear = blockers.length === 0;
+        if (clear) { cornerClear++; clearRays++; }
+        if (LOS_DEBUG) {
+          const hit = clear
+            ? 'CLEAR'
+            : 'BLOCKED by ' + blockers.map(({ wi, w }) =>
+                `W${wi}(${r2(w[0])},${r2(w[1])})->(${r2(w[2])},${r2(w[3])})`).join(', ');
+          console.log(`[LoS]   ray S${si}(${r2(s.x)},${r2(s.y)})->T${ti}(${r2(t.x)},${r2(t.y)}): ${hit}`);
+        }
+      }
+      if (cornerClear === 4) anyCornerFullyClear = true;
+      if (LOS_DEBUG) console.log(`[LoS]  source corner S${si}: ${cornerClear}/4 target corners visible`);
+    }
+
+    // A creature can sight from anywhere in its space: if ANY source corner sees
+    // all four target corners, there is no cover. All 16 blocked -> no line of
+    // sight. Otherwise, cover.
     let result: string;
-    if (clearRays === 16) result = 'clear';
+    if (anyCornerFullyClear) result = 'clear';
     else if (clearRays === 0) result = 'blocked';
     else result = 'cover';
 
+    // Cross-level: the 2-D wall geometry cannot model floors, balconies or
+    // stairwells, so by default tokens on different levels do not see each
+    // other. Pass crossLevelSight: true to report the raw 2-D verdict instead
+    // (useful for open galleries) — the GM then adjudicates the vertical.
+    const crossLevel = !!(srcLevel && tgtLevel && srcLevel._id !== tgtLevel._id);
+    if (crossLevel && !data.crossLevelSight && !data.ignoreLevels) {
+      result = 'blocked';
+    }
+
+    if (LOS_DEBUG) {
+      console.log(`[LoS] RESULT: ${result} (clearRays=${clearRays}/16, ` +
+        `anyCornerFullyClear=${anyCornerFullyClear}` +
+        (crossLevel ? `, crossLevel=true` : '') + `)`);
+    }
+
+    const levelInfo = (l: any, e: number) =>
+      l ? { name: l.name, bottom: l.elevation?.bottom, top: l.elevation?.top, elevation: e }
+        : { name: null, elevation: e };
+
     return {
-      source: { tokenId: src.id, name: src.name },
-      target: { tokenId: tgt.id, name: tgt.name },
+      source: { tokenId: src.id, name: src.name, level: levelInfo(srcLevel, srcElev) },
+      target: { tokenId: tgt.id, name: tgt.name, level: levelInfo(tgtLevel, tgtElev) },
       lineOfSight: result,
       clearRays,
       totalRays: 16,
       sightBlockingWalls: sightWalls.length,
-      note:
-        result === 'cover'
+      crossLevel,
+      levelFilter: data.ignoreLevels ? 'disabled' : srcLevel ? srcLevel.name : 'no levels configured',
+      note: crossLevel && !data.crossLevelSight && !data.ignoreLevels
+        ? `Tokens are on different levels (${srcLevel.name} vs ${tgtLevel.name}); reported as blocked. ` +
+          'Pass crossLevelSight: true for the raw 2-D verdict if a balcony or stairwell connects them.'
+        : result === 'cover'
           ? 'Some but not all corner-to-corner rays are clear: the target likely has cover (GM adjudicates lesser vs standard).'
           : result === 'clear'
             ? 'At least one source corner sees all target corners: unobstructed.'
