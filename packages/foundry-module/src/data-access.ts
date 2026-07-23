@@ -3583,11 +3583,172 @@ export class FoundryDataAccess {
     all?: boolean;
     selected?: boolean;
     targeted?: boolean;
+    detail?: 'basic' | 'full';
   }): Promise<any> {
     const scene: any = (game as any).scenes?.active;
     if (!scene) throw new Error('No active scene');
     const tokens: any[] = Array.from(scene.tokens ?? []);
     if (tokens.length === 0) throw new Error('No tokens on the active scene');
+
+    // ---- detail: 'full' extras -------------------------------------------
+    // Everything a GM needs to actually RUN a creature: strikes, skills,
+    // senses, spellcasting, GM notes. Gated behind detail: 'full' so the
+    // default per-round poll stays small. Each section is independently
+    // guarded: a failure in one never costs the rest of the payload.
+    const stripHtml = (s: any, cap = 1500): string | undefined => {
+      if (typeof s !== 'string' || !s.trim()) return undefined;
+      const text = s
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/@UUID\[[^\]]*\]\{([^}]*)\}/g, '$1')
+        .replace(/@Check\[[^\]]*\]/g, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      return text.length > cap ? text.slice(0, cap) + '…' : text;
+    };
+    const guard = <T>(fn: () => T): T | undefined => {
+      try {
+        return fn();
+      } catch (_e) {
+        return undefined;
+      }
+    };
+
+    const fullDetail = (actor: any) => {
+      const out: any = {};
+
+      // Strikes: prepared actions first (PC + NPC), else raw NPC attack items
+      out.strikes = guard(() => {
+        const prepared = (actor.system?.actions ?? []) as any[];
+        if (prepared.length) {
+          return prepared.map(s => ({
+            name: s.label ?? s.slug ?? s.item?.name,
+            attackBonus: s.totalModifier ?? null,
+            damage: s.damageFormula ?? s.item?.system?.damageRolls
+              ? Object.values(s.item?.system?.damageRolls ?? {}).map(
+                  (d: any) => `${d.damage} ${d.damageType}`
+                ).join(', ')
+              : undefined,
+            traits: (s.traits ?? []).map((t: any) => t.name ?? t.label ?? t),
+            ready: s.ready ?? undefined,
+          }));
+        }
+        return (actor.itemTypes?.melee ?? []).map((m: any) => ({
+          name: m.name,
+          attackBonus: m.system?.bonus?.value ?? null,
+          damage: Object.values(m.system?.damageRolls ?? {})
+            .map((d: any) => `${d.damage} ${d.damageType}`)
+            .join(', '),
+          traits: m.system?.traits?.value ?? [],
+        }));
+      });
+
+      out.abilities = guard(() =>
+        Object.fromEntries(
+          Object.entries(actor.abilities ?? {}).map(([k, v]: any) => [k, v.mod])
+        )
+      );
+
+      out.skills = guard(() =>
+        Object.fromEntries(
+          Object.entries(actor.skills ?? {})
+            .filter(([, v]: any) => v && typeof v.mod === 'number')
+            .map(([k, v]: any) => [k, v.rank ? { mod: v.mod, rank: v.rank } : { mod: v.mod }])
+        )
+      );
+
+      out.senses = guard(() => {
+        const raw = actor.perception?.senses ?? actor.system?.perception?.senses ?? [];
+        const list = Array.isArray(raw) ? raw : Array.from(raw ?? []);
+        return list.map((s: any) =>
+          typeof s === 'string'
+            ? s
+            : [s.type ?? s.slug, s.acuity, s.range ? `${s.range} ft` : null]
+                .filter(Boolean)
+                .join(' ')
+        );
+      });
+
+      out.spellcasting = guard(() =>
+        (actor.spellcasting?.contents ?? [])
+          .filter((e: any) => e?.statistic)
+          .map((e: any) => ({
+            name: e.name,
+            tradition: e.tradition ?? e.system?.tradition?.value,
+            prepared: e.system?.prepared?.value,
+            spellDC: e.statistic?.dc?.value ?? null,
+            spellAttack: e.statistic?.check?.mod ?? null,
+            spells: (e.spells?.contents ?? []).slice(0, 40).map((sp: any) => sp.name),
+          }))
+      );
+
+      out.abilitiesAndFeats = guard(() => ({
+        actions: (actor.itemTypes?.action ?? []).map((i: any) => i.name),
+        feats: (actor.itemTypes?.feat ?? []).map((i: any) => i.name),
+      }));
+
+      out.inventory = guard(() => ({
+        weapons: (actor.itemTypes?.weapon ?? []).map((i: any) => i.name),
+        armor: (actor.itemTypes?.armor ?? []).map((i: any) => i.name),
+        consumables: (actor.itemTypes?.consumable ?? []).map((i: any) => i.name),
+        equipment: (actor.itemTypes?.equipment ?? []).map((i: any) => i.name),
+      }));
+
+      const at = actor.system?.attributes ?? {};
+      out.defenses = guard(() => ({
+        shield: at.shield
+          ? {
+              ac: at.shield.ac,
+              hardness: at.shield.hardness,
+              hp: at.shield.hp?.value,
+              maxHp: at.shield.hp?.max,
+              brokenThreshold: at.shield.brokenThreshold,
+            }
+          : undefined,
+        hardness: at.hardness?.value ?? at.hardness ?? undefined,
+      }));
+
+      out.dcs = guard(() => ({
+        classDC: at.classDC?.value ?? actor.system?.attributes?.classDC?.value,
+        classOrSpellDC: at.classOrSpellDC?.value,
+      }));
+
+      out.resources = guard(() => ({
+        heroPoints: actor.system?.resources?.heroPoints?.value,
+        focus: actor.system?.resources?.focus
+          ? `${actor.system.resources.focus.value}/${actor.system.resources.focus.max}`
+          : undefined,
+      }));
+
+      out.initiative = guard(() => ({
+        statistic: actor.initiative?.statistic?.slug ?? actor.system?.initiative?.statistic,
+        mod: actor.initiative?.mod,
+      }));
+
+      const details = actor.system?.details ?? {};
+      out.details = guard(() => ({
+        rarity: actor.system?.traits?.rarity,
+        languages: details.languages?.value ?? undefined,
+        creatureType: details.creatureType ?? undefined,
+        ancestry: details.ancestry?.name,
+        heritage: details.heritage?.name,
+        class: details.class?.name,
+        background: details.background?.name,
+        alliance: details.alliance ?? undefined,
+      }));
+
+      // GM-facing notes: published bestiary entries put tactics here
+      out.notes = guard(() => ({
+        blurb: stripHtml(details.blurb),
+        publicNotes: stripHtml(details.publicNotes),
+        privateNotes: stripHtml(details.privateNotes),
+      }));
+
+      return out;
+    };
 
     const describe = (t: any) => {
       const actor: any = t.actor; // synthetic (delta-applied) actor for unlinked tokens
@@ -3664,6 +3825,7 @@ export class FoundryDataAccess {
                 .map(k => [k, actor.saves[k].mod])
             )
           : undefined,
+        ...(data.detail === 'full' ? fullDetail(actor) : {}),
       };
     };
 

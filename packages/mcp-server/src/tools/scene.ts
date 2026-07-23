@@ -44,7 +44,7 @@ export class SceneTools {
       {
         name: 'get-token-state',
         description:
-          'Get LIVE state (HP, AC, conditions with badge values, active effects, and immunities/weaknesses/resistances) of tokens on the active scene, read from each token\'s own synthetic actor — correct for unlinked tokens whose conditions differ from the world actor. Identify one token by tokenId, tokenName, or nearest x/y pixel coordinates, or pass all: true for every token. Pass selected: true for the token(s) the GM currently has selected on the canvas, or targeted: true for the GM\'s targeted token(s).',
+          'Get LIVE state (HP, AC, conditions with badge values, active effects, and immunities/weaknesses/resistances) of tokens on the active scene, read from each token\'s own synthetic actor — correct for unlinked tokens whose conditions differ from the world actor. Identify one token by tokenId, tokenName, or nearest x/y pixel coordinates, or pass all: true for every token. Pass detail: \'full\' for a complete statblock readout (strikes, skills, senses, spellcasting, feats, inventory, GM notes) when you need to run the creature rather than just track its HP. Pass selected: true for the token(s) the GM currently has selected on the canvas, or targeted: true for the GM\'s targeted token(s).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -53,6 +53,7 @@ export class SceneTools {
             x: { type: 'number', description: 'Scene x coordinate; pairs with y for nearest-token lookup' },
             y: { type: 'number', description: 'Scene y coordinate; pairs with x for nearest-token lookup' },
             all: { type: 'boolean', description: 'Return state of ALL tokens on the scene', default: false },
+            detail: { type: 'string', enum: ['basic', 'full'], description: "Level of detail. 'basic' (default) returns HP, AC, conditions, IWR, speeds and saves — small enough to poll every round. 'full' adds strikes with attack bonuses and damage, skills, ability modifiers, senses, spellcasting DCs and spell lists, feats and special actions, inventory, shield/hardness, class DC, resources, initiative, languages/rarity, and GM-facing bestiary notes (tactics).", default: 'basic' },
             selected: { type: 'boolean', description: 'Use the token(s) currently SELECTED on the GM canvas', default: false },
             targeted: { type: 'boolean', description: 'Use the token(s) currently TARGETED by the GM user', default: false },
           },
@@ -178,6 +179,7 @@ export class SceneTools {
       all: z.boolean().default(false),
       selected: z.boolean().default(false),
       targeted: z.boolean().default(false),
+      detail: z.enum(['basic', 'full']).default('basic'),
     });
     const params = schema.parse(args);
     this.logger.info('Getting token state', params);
