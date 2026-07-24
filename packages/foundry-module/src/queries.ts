@@ -1697,6 +1697,7 @@ export class QueryHandlers {
     tokenId: string;
     conditionId: string;
     active: boolean;
+    value?: number;
   }): Promise<any> {
     try {
       // SECURITY: Silent GM validation
