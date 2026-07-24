@@ -4408,11 +4408,12 @@ export class FoundryDataAccess {
     const tgt = resolve(data.targetTokenId, data.targetTokenName, false, data.targetTargeted, 'target');
     if (!src || !tgt) throw new Error('Source or target token not found');
 
-    // token corners (inset slightly so edge-touching walls don't false-block)
-    const inset = gridSize * 0.05;
+    // Token corners are EXACT. An inset nudges a ray that should graze a wall
+    // edge onto an arbitrary side, losing legitimately-clear sightlines; the
+    // grazing case is handled by the endpoint rule in blocksRay() instead.
     const corners = (t: any) => {
-      const x0 = t.x + inset, y0 = t.y + inset;
-      const x1 = t.x + t.width * gridSize - inset, y1 = t.y + t.height * gridSize - inset;
+      const x0 = t.x, y0 = t.y;
+      const x1 = t.x + t.width * gridSize, y1 = t.y + t.height * gridSize;
       return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x0, y: y1 }, { x: x1, y: y1 }];
     };
 
@@ -4458,20 +4459,117 @@ export class FoundryDataAccess {
     });
     const sightWalls = sightWallDocs.map(w => (w.c ?? w._source?.c ?? []));
 
-    // segment intersection
-    const ccw = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) =>
-      (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
-    const intersects = (p1: any, p2: any, w: number[]) => {
-      const a = { x: w[0], y: w[1] }, b = { x: w[2], y: w[3] };
-      return (
-        ccw(p1.x, p1.y, a.x, a.y, b.x, b.y) !== ccw(p2.x, p2.y, a.x, a.y, b.x, b.y) &&
-        ccw(p1.x, p1.y, p2.x, p2.y, a.x, a.y) !== ccw(p1.x, p1.y, p2.x, p2.y, b.x, b.y)
-      );
+    // ---- Exact segment intersection with endpoint (grazing) semantics ------
+    // orient() returns the SIGN of the cross product: 0 means exactly collinear,
+    // which lets us distinguish "the ray crosses the wall" from "the ray only
+    // touches a wall endpoint".
+    //
+    // A sightline that just skirts the end of a wall should be CLEAR -- but only
+    // at a FREE end. An endpoint shared with another sight-blocking wall (a room
+    // corner, or a long wall drawn as several segments) is solid geometry, so a
+    // ray through it still blocks; otherwise a perfectly-aligned ray would slip
+    // through the junction. No epsilon, no geometry fudging: integer-exact.
+    const orient = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) => {
+      const v = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      return v > 0 ? 1 : v < 0 ? -1 : 0;
+    };
+    const onSeg = (ax: number, ay: number, bx: number, by: number, px: number, py: number) =>
+      Math.min(ax, bx) <= px && px <= Math.max(ax, bx) &&
+      Math.min(ay, by) <= py && py <= Math.max(ay, by);
+
+    const keyOf = (x: number, y: number) => `${Math.round(x * 100)}:${Math.round(y * 100)}`;
+
+    // Vertex adjacency: every wall endpoint maps to the walls meeting there,
+    // each recorded with its FAR endpoint so we can ask which side of a ray it
+    // lies on.
+    const adjacency = new Map<string, Array<{ wi: number; ox: number; oy: number }>>();
+    const addAdj = (x: number, y: number, wi: number, ox: number, oy: number) => {
+      const k = keyOf(x, y);
+      if (!adjacency.has(k)) adjacency.set(k, []);
+      adjacency.get(k)!.push({ wi, ox, oy });
+    };
+    sightWalls.forEach((c, i) => {
+      if (c.length < 4) return;
+      addAdj(c[0], c[1], i, c[2], c[3]);
+      addAdj(c[2], c[3], i, c[0], c[1]);
+    });
+
+    /**
+     * Does the barrier actually CROSS the ray at this vertex, or merely touch
+     * it? Walls collinear with the ray mean the barrier continues *along* the
+     * sightline, so we walk through them and keep looking; every non-collinear
+     * wall votes for the side it lies on. Walls on both sides == the ray passes
+     * through the barrier. Walls on one side only == the ray runs alongside or
+     * grazes a corner, which does not block. A free wall end has a single
+     * attached wall, so it can never produce both sides -- grazing past the end
+     * of a wall is clear, with no epsilon needed.
+     */
+    const crossesAtVertex = (p1: any, p2: any, vx: number, vy: number): boolean => {
+      const seen = new Set<string>();
+      const queue: Array<[number, number]> = [[vx, vy]];
+      const sides = new Set<number>();
+      while (queue.length) {
+        const [x, y] = queue.pop()!;
+        const k = keyOf(x, y);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        for (const { ox, oy } of adjacency.get(k) ?? []) {
+          const s = orient(p1.x, p1.y, p2.x, p2.y, ox, oy);
+          if (s === 0) {
+            if (!seen.has(keyOf(ox, oy))) queue.push([ox, oy]);
+          } else {
+            sides.add(s);
+          }
+        }
+      }
+      return sides.has(1) && sides.has(-1);
+    };
+
+    /**
+     * Does the ray share ANY point with this wall -- crossing it, touching a
+     * corner, ending on it, or lying along it? A ray that only touches is not
+     * blocked (see blocksRay), but neither is it a real sightline: for a wall
+     * standing in for a solid tile, you cannot see through its corner. Used to
+     * separate "truly clear" rays from grazing ones.
+     */
+    const touchesWall = (p1: any, p2: any, w: number[]) => {
+      if (w.length < 4) return false;
+      const d1 = orient(w[0], w[1], w[2], w[3], p1.x, p1.y);
+      const d2 = orient(w[0], w[1], w[2], w[3], p2.x, p2.y);
+      const d3 = orient(p1.x, p1.y, p2.x, p2.y, w[0], w[1]);
+      const d4 = orient(p1.x, p1.y, p2.x, p2.y, w[2], w[3]);
+      if (d1 * d2 < 0 && d3 * d4 < 0) return true;
+      if (d1 === 0 && onSeg(w[0], w[1], w[2], w[3], p1.x, p1.y)) return true;
+      if (d2 === 0 && onSeg(w[0], w[1], w[2], w[3], p2.x, p2.y)) return true;
+      if (d3 === 0 && onSeg(p1.x, p1.y, p2.x, p2.y, w[0], w[1])) return true;
+      if (d4 === 0 && onSeg(p1.x, p1.y, p2.x, p2.y, w[2], w[3])) return true;
+      return false;
+    };
+
+    const blocksRay = (p1: any, p2: any, w: number[]) => {
+      if (w.length < 4) return false;
+      const d1 = orient(w[0], w[1], w[2], w[3], p1.x, p1.y);
+      const d2 = orient(w[0], w[1], w[2], w[3], p2.x, p2.y);
+      const d3 = orient(p1.x, p1.y, p2.x, p2.y, w[0], w[1]);
+      const d4 = orient(p1.x, p1.y, p2.x, p2.y, w[2], w[3]);
+      // the ray passes through the wall's interior
+      if (d1 * d2 < 0 && d3 * d4 < 0) return true;
+      // the ray runs exactly along this wall: sighting down a wall face never
+      // blocks by itself (its ends are judged by the vertex test below)
+      if (d3 === 0 && d4 === 0) return false;
+      // the ray touches one of the wall's endpoints
+      if (d3 === 0 && onSeg(p1.x, p1.y, p2.x, p2.y, w[0], w[1])) {
+        return crossesAtVertex(p1, p2, w[0], w[1]);
+      }
+      if (d4 === 0 && onSeg(p1.x, p1.y, p2.x, p2.y, w[2], w[3])) {
+        return crossesAtVertex(p1, p2, w[2], w[3]);
+      }
+      return false;
     };
     const sc = corners(src), tc = corners(tgt);
 
     // ---- DEBUG LOGGING (remove once verified) ----
-    const LOS_DEBUG = true;
+    const LOS_DEBUG = false;
     const r2 = (n: number) => Math.round(n * 100) / 100;
     if (LOS_DEBUG) {
       console.log(`[LoS] ${src.name} (${r2(src.x)},${r2(src.y)} ${src.width}x${src.height}) ` +
@@ -4500,11 +4598,18 @@ export class FoundryDataAccess {
         const tags = ids.length
           ? ids.map(id => sceneLevels.find(l => l._id === id)?.name ?? id).join('+')
           : 'all-levels';
-        console.log(`[LoS]   W${i}: (${r2(w[0])},${r2(w[1])})->(${r2(w[2])},${r2(w[3])}) [${tags}]`);
+        const nAt = (x: number, y: number) => (adjacency.get(keyOf(x, y)) ?? []).length;
+        const endTag = (x: number, y: number) => (nAt(x, y) > 1 ? `junction(${nAt(x, y)})` : 'free');
+        const ends = `ends:${endTag(w[0], w[1])}/${endTag(w[2], w[3])}`;
+        console.log(
+          `[LoS]   W${i}: (${r2(w[0])},${r2(w[1])})->(${r2(w[2])},${r2(w[3])}) [${tags}] ${ends}`
+        );
       });
     }
 
     let clearRays = 0;
+    let trulyClearRays = 0;
+    let grazingRays = 0;
     let anyCornerFullyClear = false;
     for (let si = 0; si < sc.length; si++) {
       const s = sc[si];
@@ -4513,12 +4618,20 @@ export class FoundryDataAccess {
         const t = tc[ti];
         const blockers = sightWalls
           .map((w, wi) => ({ wi, w }))
-          .filter(({ w }) => w.length >= 4 && intersects(s, t, w));
+          .filter(({ w }) => blocksRay(s, t, w));
         const clear = blockers.length === 0;
-        if (clear) { cornerClear++; clearRays++; }
+        const grazes = clear && sightWalls.some(w => touchesWall(s, t, w));
+        if (clear) {
+          cornerClear++;
+          clearRays++;
+          if (grazes) grazingRays++;
+          else trulyClearRays++;
+        }
         if (LOS_DEBUG) {
           const hit = clear
-            ? 'CLEAR'
+            ? grazes
+              ? 'CLEAR (grazing -- only touches wall geometry)'
+              : 'CLEAR'
             : 'BLOCKED by ' + blockers.map(({ wi, w }) =>
                 `W${wi}(${r2(w[0])},${r2(w[1])})->(${r2(w[2])},${r2(w[3])})`).join(', ');
           console.log(`[LoS]   ray S${si}(${r2(s.x)},${r2(s.y)})->T${ti}(${r2(t.x)},${r2(t.y)}): ${hit}`);
@@ -4529,11 +4642,13 @@ export class FoundryDataAccess {
     }
 
     // A creature can sight from anywhere in its space: if ANY source corner sees
-    // all four target corners, there is no cover. All 16 blocked -> no line of
-    // sight. Otherwise, cover.
+    // all four target corners, there is no cover. Cover requires at least one
+    // TRULY clear ray -- if every unblocked ray merely grazes wall geometry
+    // (threading a corner vertex, hugging a face), nothing is really visible and
+    // the verdict is blocked.
     let result: string;
-    if (anyCornerFullyClear) result = 'clear';
-    else if (clearRays === 0) result = 'blocked';
+    if (trulyClearRays === 0) result = 'blocked';
+    else if (anyCornerFullyClear) result = 'clear';
     else result = 'cover';
 
     // Cross-level: the 2-D wall geometry cannot model floors, balconies or
@@ -4547,6 +4662,7 @@ export class FoundryDataAccess {
 
     if (LOS_DEBUG) {
       console.log(`[LoS] RESULT: ${result} (clearRays=${clearRays}/16, ` +
+        `truly=${trulyClearRays}, grazing=${grazingRays}, ` +
         `anyCornerFullyClear=${anyCornerFullyClear}` +
         (crossLevel ? `, crossLevel=true` : '') + `)`);
     }
@@ -4560,6 +4676,8 @@ export class FoundryDataAccess {
       target: { tokenId: tgt.id, name: tgt.name, level: levelInfo(tgtLevel, tgtElev) },
       lineOfSight: result,
       clearRays,
+      trulyClearRays,
+      grazingRays,
       totalRays: 16,
       sightBlockingWalls: sightWalls.length,
       crossLevel,
@@ -4571,7 +4689,9 @@ export class FoundryDataAccess {
           ? 'Some but not all corner-to-corner rays are clear: the target likely has cover (GM adjudicates lesser vs standard).'
           : result === 'clear'
             ? 'At least one source corner sees all target corners: unobstructed.'
-            : 'All 16 rays cross a sight-blocking wall: no line of sight.',
+            : grazingRays > 0
+              ? 'No ray is truly clear: every unblocked ray only grazes wall geometry (corner or face), so nothing is really visible.'
+              : 'All 16 rays cross a sight-blocking wall: no line of sight.',
     };
   }
 
@@ -6212,10 +6332,10 @@ export class FoundryDataAccess {
           <p><strong>Roll Request:</strong> ${buttonLabel}</p>
           <p><strong>Target:</strong> ${playerInfo.targetName} ${playerInfo.character ? `(${playerInfo.character.name})` : ''}</p>
           ${data.flavor ? `<p><strong>Context:</strong> ${data.flavor}</p>` : ''}
-          
+
           <div style="text-align: center; margin-top: 8px;">
             <!-- Single Roll Button (clickable by both character owner and GM) -->
-            <button class="mcp-roll-button mcp-button-active" 
+            <button class="mcp-roll-button mcp-button-active"
                     data-button-id="${buttonId}"
                     data-roll-formula="${rollFormula}"
                     data-roll-label="${buttonLabel}"
