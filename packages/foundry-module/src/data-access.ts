@@ -3783,7 +3783,20 @@ export class FoundryDataAccess {
           return entry;
         });
       // Movement speeds: land at attrs.speed.value, others in otherSpeeds[]
+      // Modern PF2e keeps movement at system.movement.speeds (land/fly/swim/
+      // climb/burrow), each a trace object; system.attributes.speed is gone.
+      // Older data still uses attributes.speed with an otherSpeeds[] array.
       const readSpeeds = (sp: any) => {
+        const movement = actor.system?.movement?.speeds;
+        if (movement && typeof movement === 'object') {
+          const out: Record<string, number> = {};
+          for (const [type, entry] of Object.entries(movement as Record<string, any>)) {
+            if (!entry || type === 'travel') continue;
+            const v = entry.total ?? entry.value ?? entry.base;
+            if (typeof v === 'number' && v > 0) out[type] = v;
+          }
+          if (Object.keys(out).length) return out;
+        }
         if (!sp) return null;
         const out: Record<string, number> = {};
         if (typeof sp.value === 'number') out.land = sp.value;
@@ -3814,7 +3827,8 @@ export class FoundryDataAccess {
         weaknesses: iwr(attrs.weaknesses),
         resistances: iwr(attrs.resistances),
         speeds: readSpeeds(attrs.speed),
-        perceptionMod: attrs.perception?.value ?? actor.system?.perception?.mod ?? null,
+        perceptionMod:
+          actor.perception?.mod ?? attrs.perception?.value ?? actor.system?.perception?.mod ?? null,
         level: actor.system?.details?.level?.value ?? null,
         sizeCategory: actor.system?.traits?.size?.value ?? null,
         creatureTraits: actor.system?.traits?.value ?? [],
@@ -8413,6 +8427,7 @@ export class FoundryDataAccess {
     tokenId: string;
     conditionId: string;
     active: boolean;
+    value?: number;
   }): Promise<any> {
     this.validateFoundryState();
 
@@ -8442,7 +8457,7 @@ export class FoundryDataAccess {
       }
 
       // Get the condition configuration for the game system
-      const conditions = (CONFIG as any).statusEffects || [];
+      const conditions = this.statusEffectList();
       const condition = conditions.find(
         (c: any) =>
           c.id === data.conditionId || c.name?.toLowerCase() === data.conditionId.toLowerCase()
@@ -8452,8 +8467,39 @@ export class FoundryDataAccess {
         throw new Error(`Condition not found: ${data.conditionId}`);
       }
 
-      if (data.active) {
-        // Add the condition - handle DSA5 and other systems
+      // PREFERRED PATH: let the system apply the condition itself.
+      // In PF2e a condition is an embedded ITEM (with a badge value), not an
+      // ActiveEffect -- creating an ActiveEffect makes a stray effect the system
+      // ignores, which is why toggled conditions never showed up on read-back.
+      // Actor#toggleStatusEffect is core Foundry, and PF2e overrides it to route
+      // real conditions through toggleCondition/increaseCondition.
+      const slug = condition.id;
+      let handledBySystem = false;
+      if (typeof (actor as any).toggleStatusEffect === 'function') {
+        await (actor as any).toggleStatusEffect(slug, { active: data.active });
+        handledBySystem = true;
+
+        // Valued conditions (frightened 2, clumsy 3, ...) default to 1 when
+        // toggled on; set the requested value explicitly. NOTE: increaseCondition
+        // ADDS to the current value (newValue = current + value), so it cannot be
+        // used to set an exact value -- use the system's updateConditionValue.
+        if (data.active && typeof data.value === 'number' && data.value >= 1) {
+          const existing = ((actor as any).itemTypes?.condition ?? []).find(
+            (c: any) => c.slug === slug
+          );
+          if (existing && existing.system?.value?.value != null) {
+            const manager = (game as any).pf2e?.ConditionManager;
+            if (typeof manager?.updateConditionValue === 'function') {
+              await manager.updateConditionValue(existing.id, actor, data.value);
+            } else {
+              await existing.update({ 'system.value.value': data.value });
+            }
+          }
+        }
+      }
+
+      if (!handledBySystem && data.active) {
+        // FALLBACK: systems without toggleStatusEffect -- create an ActiveEffect
         const effectData: any = {
           name: condition.name || condition.label || condition.id,
           icon: condition.icon || condition.img,
@@ -8477,7 +8523,7 @@ export class FoundryDataAccess {
         }
 
         await actor.createEmbeddedDocuments('ActiveEffect', [effectData]);
-      } else {
+      } else if (!handledBySystem) {
         // Remove the condition
         const effects = actor.effects?.contents || [];
         const effectsToRemove = effects.filter((effect: any) => {
@@ -8504,6 +8550,15 @@ export class FoundryDataAccess {
         }
       }
 
+      // Read the live result back so the caller can verify in one round trip
+      const freshActor: any = scene.tokens.get(data.tokenId)?.actor;
+      const nowConditions = ((freshActor?.itemTypes?.condition ?? []) as any[]).map((c: any) => ({
+        name: c.name,
+        slug: c.slug,
+        value: c.system?.value?.value ?? null,
+      }));
+      const nowStatuses = freshActor?.statuses ? Array.from(freshActor.statuses) : [];
+
       this.auditLog('toggleTokenCondition', data, 'success');
 
       return {
@@ -8511,9 +8566,18 @@ export class FoundryDataAccess {
         tokenId: token.id,
         tokenName: token.name,
         conditionId: data.conditionId,
-        conditionName: condition.name || condition.label || condition.id,
+        conditionName:
+          (game as any).i18n?.localize(condition.name || condition.label || condition.id) ??
+          (condition.name || condition.label || condition.id),
         isActive: data.active,
         active: data.active,
+        appliedVia: handledBySystem ? 'system (condition item)' : 'ActiveEffect fallback',
+        // verified live read-back, not an echo of the request
+        conditions: nowConditions,
+        statuses: nowStatuses,
+        verified: data.active
+          ? nowConditions.some((c: any) => c.slug === slug) || nowStatuses.includes(slug)
+          : !nowConditions.some((c: any) => c.slug === slug) && !nowStatuses.includes(slug),
         message: data.active
           ? `Applied ${data.conditionId} to ${token.name}`
           : `Removed ${data.conditionId} from ${token.name}`,
@@ -8534,18 +8598,37 @@ export class FoundryDataAccess {
   /**
    * Get all available conditions for the current game system
    */
+  /**
+   * CONFIG.statusEffects is NOT reliably an array. The PF2e system deletes the
+   * core backward-compatibility Proxy and assigns a plain object keyed by id
+   * (see its status-effects.ts), so `.map`/`.find` throw. Other systems use an
+   * array, and some use a Map. Normalise all three to an array.
+   */
+  private statusEffectList(): any[] {
+    const raw = (CONFIG as any).statusEffects;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw.values === 'function') return Array.from(raw.values()); // Map
+    return Object.entries(raw).map(([id, effect]: [string, any]) =>
+      effect && typeof effect === 'object' ? { id: effect.id ?? id, ...effect } : { id, name: id }
+    );
+  }
+
   async getAvailableConditions(): Promise<any> {
     this.validateFoundryState();
 
     try {
-      const conditions = (CONFIG as any).statusEffects || [];
+      const conditions = this.statusEffectList();
 
       return {
         success: true,
         gameSystem: game.system?.id,
         conditions: conditions.map((condition: any) => ({
           id: condition.id,
-          name: condition.name || condition.label || condition.id,
+          // PF2e stores i18n keys here (e.g. "PF2E.Actor.Dead"); localise them
+          name: (game as any).i18n?.localize(
+            condition.name || condition.label || condition.id
+          ) ?? (condition.name || condition.label || condition.id),
           icon: condition.icon || condition.img,
           description: condition.description || '',
         })),

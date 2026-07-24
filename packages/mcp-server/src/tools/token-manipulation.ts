@@ -147,7 +147,7 @@ export class TokenManipulationTools {
       {
         name: 'toggle-token-condition',
         description:
-          'Toggle a status effect/condition on or off for a token. Use this to apply or remove conditions like Prone, Poisoned, Blinded, etc.',
+          "Toggle a status effect/condition on or off for a token, applied through the game system's own API (in PF2e a condition is an embedded item with a badge value, not an ActiveEffect). Use for prone, frightened, blinded, etc. Pass value for valued conditions, e.g. frightened 2. The response includes a verified read-back of the token's live conditions.",
         inputSchema: {
           type: 'object',
           properties: {
@@ -164,6 +164,11 @@ export class TokenManipulationTools {
               type: 'boolean',
               description:
                 'Optional: true to add the condition, false to remove it. If not specified, will toggle the current state.',
+            },
+            value: {
+              type: 'number',
+              description:
+                'Optional: for valued conditions (frightened, clumsy, enfeebled, drained, stupefied, slowed, sickened, wounded, doomed, dying, stunned), the badge value to set. Defaults to 1.',
             },
           },
           required: ['tokenId', 'conditionId'],
@@ -374,28 +379,31 @@ export class TokenManipulationTools {
     const schema = z.object({
       tokenId: z.string(),
       conditionId: z.string(),
+      value: z.number().optional(),
       active: z.boolean().optional(),
     });
 
-    const { tokenId, conditionId, active } = schema.parse(args);
+    const { tokenId, conditionId, active, value } = schema.parse(args);
 
-    this.logger.info('Toggling token condition', { tokenId, conditionId, active });
+    this.logger.info('Toggling token condition', { tokenId, conditionId, active, value });
 
     try {
       const result = await this.foundryClient.query('foundry-mcp-bridge.toggle-token-condition', {
         tokenId,
         conditionId,
         active,
+        value,
       });
 
       this.logger.debug('Token condition toggled successfully', { tokenId, conditionId, result });
 
+      // Pass the module's response through: it carries the verified read-back
+      // (conditions/statuses/verified) that proves the write actually landed.
       return {
         success: true,
+        ...result,
         tokenId,
         conditionId,
-        isActive: result.isActive,
-        conditionName: result.conditionName,
       };
     } catch (error) {
       this.logger.error('Failed to toggle token condition', error);
