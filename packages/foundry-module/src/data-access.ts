@@ -4221,6 +4221,9 @@ export class FoundryDataAccess {
     healing?: boolean;
     skipIWR?: boolean;
     raw?: boolean;
+    damageType?: string;
+    materials?: string[];
+    instances?: Array<{ amount: number; damageType?: string; materials?: string[] }>;
   }): Promise<any> {
     // Resolve the target token document(s) by reusing getTokenState's matcher
     const lookup: { selected?: boolean; targeted?: boolean; tokenId?: string; tokenName?: string } = {};
@@ -4242,6 +4245,84 @@ export class FoundryDataAccess {
     let value = Math.trunc(Math.abs(data.amount));
     if (data.healing) value = -value;
     else if (data.amount < 0) value = data.amount; // caller passed a signed value
+    if (data.instances?.length) {
+      // `amount` is ignored when explicit instances are supplied
+      value = data.instances.reduce((sum, i) => sum + Math.trunc(Math.abs(i.amount)), 0);
+      if (data.healing) value = -value;
+    }
+
+    // ---- Typed damage --------------------------------------------------
+    // PF2e's applyDamage only evaluates IWR when `damage` is a DamageRoll:
+    //   typeof damage === "number" ? {finalDamage: trunc(damage)} : applyIWR(...)
+    // A bare number therefore ALWAYS bypasses resistances/weaknesses/immunities,
+    // which also made skipIWR meaningless. Build a real DamageRoll from the
+    // requested type(s) so the system can apply IWR.
+    const cfg: any = (CONFIG as any).PF2E ?? {};
+    const validTypes: string[] = Object.keys(cfg.damageTypes ?? {});
+    const validMaterials: string[] = Object.keys(cfg.materialDamageEffects ?? {});
+
+    const buildFlavor = (type?: string, materials?: string[]): string => {
+      const ids: string[] = [];
+      if (type) {
+        const t = String(type).toLowerCase().trim();
+        if (validTypes.length && !validTypes.includes(t)) {
+          throw new Error(
+            `Unknown damage type "${type}". Valid types: ${validTypes.sort().join(', ')}`
+          );
+        }
+        ids.push(t);
+      }
+      for (const m of materials ?? []) {
+        const mat = String(m).toLowerCase().trim();
+        if (validMaterials.length && !validMaterials.includes(mat)) {
+          throw new Error(
+            `Unknown material "${m}". Valid materials: ${validMaterials.sort().join(', ')}`
+          );
+        }
+        ids.push(mat);
+      }
+      return ids.join(',');
+    };
+
+    // One damage instance per entry; `instances` wins over the flat form.
+    const instanceSpecs =
+      data.instances && data.instances.length
+        ? data.instances
+        : [{ amount: value, damageType: data.damageType, materials: data.materials }];
+
+    // Instances must sit in ONE brace-delimited pool, comma separated:
+    // `{5[slashing],3[fire]}`. Joining with ' + ' collapses them into a single
+    // instance (the DamageRoll constructor auto-wraps in braces), so each
+    // instance's own weakness/resistance would not be applied.
+    const damageFormulaStr =
+      '{' +
+      instanceSpecs
+        .map(inst => {
+          const n = Math.trunc(Math.abs(inst.amount));
+          const flavor = buildFlavor(inst.damageType, inst.materials);
+          return flavor ? `${n}[${flavor}]` : `${n}`;
+        })
+        .join(',') +
+      '}';
+
+    const totalRequested = instanceSpecs.reduce(
+      (sum, i) => sum + Math.trunc(Math.abs(i.amount)),
+      0
+    );
+
+    // Only build a roll for DAMAGE: healing is not subject to IWR.
+    const DamageRollCls: any =
+      ((CONFIG as any).Dice?.rolls ?? []).find((r: any) => r?.name === 'DamageRoll') ?? null;
+    const wantTyped = !data.raw && !data.healing && totalRequested > 0 && !!DamageRollCls;
+
+    let damageRoll: any = null;
+    if (wantTyped) {
+      try {
+        damageRoll = await new DamageRollCls(damageFormulaStr).evaluate();
+      } catch (_e) {
+        damageRoll = null; // fall back to the numeric path
+      }
+    }
 
     const results: any[] = [];
     for (const id of tokenIds) {
@@ -4256,13 +4337,21 @@ export class FoundryDataAccess {
       try {
         if (!data.raw && typeof actor.applyDamage === 'function') {
           // PF2e signed-value path: runs IWR unless skipIWR/healing-final
+          // Pass a DamageRoll when we have one: only then does applyDamage run
+          // applyIWR. A bare number short-circuits IWR entirely.
           await actor.applyDamage({
-            damage: value,
+            damage: damageRoll ?? value,
             token: tokenDoc,
             skipIWR: data.skipIWR ?? false,
             final: data.raw ?? false,
           });
-          method = data.skipIWR ? 'system (no IWR)' : 'system';
+          method = damageRoll
+            ? data.skipIWR
+              ? 'system typed (IWR skipped on request)'
+              : 'system typed (IWR applied)'
+            : data.healing
+              ? 'system healing'
+              : 'system untyped (no IWR possible)';
         } else {
           // Generic fallback: clamp to [0, max], respect temp HP on damage
           const hp = actor.system.attributes.hp;
@@ -4290,10 +4379,18 @@ export class FoundryDataAccess {
         tokenId: id,
         name: tokenDoc.name,
         applied: data.healing || value < 0 ? 'healing' : 'damage',
-        requestedAmount: Math.abs(data.amount),
+        requestedAmount: totalRequested,
+        damageFormula: damageRoll ? damageFormulaStr : null,
         method,
         hpBefore,
         hpAfter,
+        // Actual HP lost vs requested: differs when a weakness/resistance fired
+        actualHpChange: hpBefore != null && hpAfter != null ? hpBefore - hpAfter : null,
+        iwrApplied:
+          !!damageRoll &&
+          hpBefore != null &&
+          hpAfter != null &&
+          hpBefore - hpAfter !== totalRequested,
         hpMax: fresh?.system?.attributes?.hp?.max ?? null,
         tempHp: fresh?.system?.attributes?.hp?.temp ?? 0,
         defeated: hpAfter != null && hpAfter <= 0,

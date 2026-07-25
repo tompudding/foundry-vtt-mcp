@@ -111,7 +111,7 @@ export class SceneTools {
       {
         name: 'apply-damage',
         description:
-          'Apply damage or healing to a token via the PF2e damage pipeline (resistances, weaknesses, hardness, temp HP, and immunities are applied automatically). Identify the target by tokenId, tokenName, selected: true, or targeted: true. amount is a positive number; set healing: true to heal instead. skipIWR applies the number as-is (ignoring resistances/weaknesses); raw forces plain HP subtraction. Requires the module\'s "Allow Combat Writes" setting.',
+          'Apply damage or healing to a token via the PF2e damage pipeline. IMPORTANT: pass damageType (and materials where relevant) - the system can only apply weaknesses, resistances and immunities to TYPED damage; untyped damage bypasses IWR entirely, which also makes skipIWR meaningless. Identify the target by tokenId, tokenName, selected: true, or targeted: true. amount is a positive number; set healing: true to heal instead. skipIWR applies the typed number as-is; raw forces plain HP subtraction. Requires the module Allow Combat Writes setting.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -123,6 +123,9 @@ export class SceneTools {
             healing: { type: 'boolean', description: 'Heal instead of damage', default: false },
             skipIWR: { type: 'boolean', description: 'Apply the number as-is, ignoring resistances/weaknesses', default: false },
             raw: { type: 'boolean', description: 'Plain HP arithmetic, bypassing the system pipeline entirely', default: false },
+            damageType: { type: 'string', description: 'Damage type: slashing, piercing, bludgeoning, fire, cold, electricity, acid, sonic, vitality, void, force, mental, poison, bleed, spirit. REQUIRED for weaknesses/resistances/immunities to apply - untyped damage bypasses IWR entirely.' },
+            materials: { type: 'array', items: { type: 'string' }, description: 'Material effects on the damage, e.g. cold-iron, silver, adamantine. Needed for creatures with material-specific weaknesses.' },
+            instances: { type: 'array', description: 'For mixed damage, one entry per instance, e.g. [{amount:7,damageType:"slashing",materials:["cold-iron"]},{amount:3,damageType:"fire"}]. Overrides amount/damageType.', items: { type: 'object', properties: { amount: { type: 'number' }, damageType: { type: 'string' }, materials: { type: 'array', items: { type: 'string' } } } } },
           },
           required: ['amount'],
         },
@@ -266,6 +269,17 @@ export class SceneTools {
       healing: z.boolean().default(false),
       skipIWR: z.boolean().default(false),
       raw: z.boolean().default(false),
+      damageType: z.string().optional(),
+      materials: z.array(z.string()).optional(),
+      instances: z
+        .array(
+          z.object({
+            amount: z.number(),
+            damageType: z.string().optional(),
+            materials: z.array(z.string()).optional(),
+          })
+        )
+        .optional(),
     });
     const params = schema.parse(args);
     this.logger.info('Applying damage', params);
