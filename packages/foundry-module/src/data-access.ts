@@ -3609,11 +3609,23 @@ export class FoundryDataAccess {
         .trim();
       return text.length > cap ? text.slice(0, cap) + '…' : text;
     };
-    const guard = <T>(fn: () => T): T | undefined => {
+    // Distinguish "could not read this" from "read it, there's nothing there":
+    // a guard that throws returns null (unavailable), while a successful read
+    // returns whatever it found ([] / {} meaning genuinely empty). Objects whose
+    // every value is undefined collapse to null rather than serialising as {}.
+    const guard = <T>(fn: () => T): T | null => {
       try {
-        return fn();
+        const value = fn();
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          const entries = Object.entries(value as Record<string, unknown>).filter(
+            ([, v]) => v !== undefined
+          );
+          if (entries.length === 0) return null;
+          return Object.fromEntries(entries) as T;
+        }
+        return value ?? null;
       } catch (_e) {
-        return undefined;
+        return null;
       }
     };
 
@@ -3723,6 +3735,14 @@ export class FoundryDataAccess {
           : undefined,
       }));
 
+      out.appearance = guard(() => ({
+        img: actor.token?.texture?.src ?? actor.prototypeToken?.texture?.src,
+        rotation: actor.token?.rotation,
+        scale: actor.token?.texture?.scaleX,
+        alpha: actor.token?.alpha,
+        lockRotation: actor.token?.lockRotation,
+      }));
+
       out.initiative = guard(() => ({
         statistic: actor.initiative?.statistic?.slug ?? actor.system?.initiative?.statistic,
         mod: actor.initiative?.mod,
@@ -3760,10 +3780,44 @@ export class FoundryDataAccess {
         name: c.name,
         value: c.system?.value?.value ?? null,
       }));
-      const effects = (actor.effects?.contents ?? []).map((e: any) => ({
+      // Effects come from TWO places in PF2e and both matter:
+      //  - embedded ITEMS of type "effect" (Light, Guidance Immunity, spell
+      //    effects, most things a GM cares about), and
+      //  - core ActiveEffects (e.g. the "Dead" status).
+      // Reading only actor.effects silently missed every item-based effect.
+      const effectItems = ((actor.itemTypes?.effect ?? []) as any[]).map((e: any) => {
+        const entry: any = {
+          name: e.name,
+          slug: e.slug ?? null,
+          source: 'item',
+          badge: e.system?.badge?.value ?? null,
+          disabled: false,
+        };
+        try {
+          const dur = e.system?.duration;
+          if (dur) {
+            entry.duration =
+              dur.unit === 'unlimited' || dur.unit === 'encounter'
+                ? dur.unit
+                : `${dur.value} ${dur.unit}`;
+            if (dur.sustained) entry.sustained = true;
+          }
+          const remaining = e.remainingDuration;
+          if (remaining && typeof remaining.remaining === 'number') {
+            entry.remainingRounds = remaining.remaining;
+            entry.expired = !!remaining.expired;
+          }
+        } catch (_e) {
+          /* duration is best-effort */
+        }
+        return entry;
+      });
+      const activeEffects = ((actor.effects?.contents ?? []) as any[]).map((e: any) => ({
         name: e.name ?? e.label,
+        source: 'activeEffect',
         disabled: !!e.disabled,
       }));
+      const effects = [...effectItems, ...activeEffects];
       const statuses = actor.statuses ? Array.from(actor.statuses) : [];
       const hp = actor.system?.attributes?.hp;
       // Immunities / weaknesses / resistances from the prepared actor. Each
@@ -3807,6 +3861,63 @@ export class FoundryDataAccess {
         return out;
       };
       const attrs = actor.system?.attributes ?? {};
+
+      // Hazards carry their whole usable statblock in system.details: the
+      // Disable entry, the routine, the reset condition, and the description.
+      // Without these a hazard is unusable at the table, so surface them
+      // whenever the actor is one. HTML is stripped to readable text.
+      const hazardInfo = (() => {
+        if (actor.type !== 'hazard') return undefined;
+        const d = actor.system?.details ?? {};
+        const clean = (s: any): string | null => {
+          if (typeof s !== 'string' || !s.trim()) return null;
+          const text = s
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/p>/gi, '\n')
+            .replace(/@UUID\[[^\]\{]*\]\{([^}]*)\}/g, '$1')
+            .replace(/@UUID\[[^\]]*?\.([^\].]+)\]/g, '$1')
+            .replace(/@Check\[([^\]]*)\](?:\{([^}]*)\})?/g, (_m, spec, label) => {
+              if (label) return label;
+              const parts = Object.fromEntries(
+                String(spec)
+                  .split('|')
+                  .filter((p: string) => p.includes(':'))
+                  .map((p: string) => p.split(':', 2))
+              );
+              const raw = parts.type ? String(parts.type) : 'check';
+              const type = raw.charAt(0).toUpperCase() + raw.slice(1);
+              return parts.dc ? `DC ${parts.dc} ${type}` : `${type} check`;
+            })
+            .replace(
+              // allow one level of nesting: @Damage[4d6[bludgeoning]]
+              /@Damage\[((?:[^[\]]|\[[^\]]*\])*)\](?:\{[^}]*\})?/g,
+              (_m, body) =>
+                String(body)
+                  .replace(/[[\]()]/g, ' ')
+                  .replace(/\s+/g, ' ')
+                  .trim()
+            )
+            .replace(/\[\[\/b?r ([^\]]*)\]\](?:\{([^}]*)\})?/g, (_m, f, l) => l || f)
+            .replace(/<[^>]+>/g, '')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+          return text || null;
+        };
+        return {
+          description: clean(d.description),
+          disable: clean(d.disable),
+          routine: clean(d.routine),
+          reset: clean(d.reset),
+          isComplex: !!d.isComplex,
+          stealthDC: attrs.stealth?.value ?? null,
+          stealthDetails: clean(attrs.stealth?.details),
+          hardness: attrs.hardness ?? null,
+          // hazards have no Will save unless complex; null means "not present"
+        };
+      })();
+
       return {
         tokenId: t.id,
         name: t.name,
@@ -3815,6 +3926,7 @@ export class FoundryDataAccess {
         elevation: t.elevation ?? 0,
         size: { width: t.width, height: t.height },
         hidden: !!t.hidden,
+        disposition: ['hostile', 'neutral', 'friendly'][(t.disposition ?? 0) + 1] ?? 'unknown',
         actorLink: !!t.actorLink,
         worldActorId: t.actorId ?? null,
         actorType: actor.type,
@@ -3838,7 +3950,10 @@ export class FoundryDataAccess {
                 .filter(k => actor.saves[k])
                 .map(k => [k, actor.saves[k].mod])
             )
-          : undefined,
+          : null,
+        // null = this actor type has no such data / it could not be read.
+        // An empty array or object means "read successfully, nothing there".
+        hazard: hazardInfo ?? null,
         ...(data.detail === 'full' ? fullDetail(actor) : {}),
       };
     };
