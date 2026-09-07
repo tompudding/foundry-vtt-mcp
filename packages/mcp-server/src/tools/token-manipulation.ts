@@ -132,7 +132,7 @@ export class TokenManipulationTools {
       {
         name: 'get-token-details',
         description:
-          'Get detailed information about a specific token including all properties and linked actor data',
+          'Get a token\'s PLACEMENT and appearance only: position, size, rotation, scale, alpha, image, disposition, elevation, and the id/name/type of its linked actor. It does NOT report live game state. For HP, AC, conditions, effects, IWR, speeds, saves or hazard details, use get-token-state instead.',
         inputSchema: {
           type: 'object',
           properties: {
