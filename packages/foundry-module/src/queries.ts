@@ -35,6 +35,9 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.getTokenDistances`] = this.handleGetTokenDistances.bind(this);
     CONFIG.queries[`${modulePrefix}.applyTokenDamage`] = this.handleApplyTokenDamage.bind(this);
     CONFIG.queries[`${modulePrefix}.getSceneWalls`] = this.handleGetSceneWalls.bind(this);
+    CONFIG.queries[`${modulePrefix}.getWorldTime`] = this.handleGetWorldTime.bind(this);
+    CONFIG.queries[`${modulePrefix}.setWorldTime`] = this.handleSetWorldTime.bind(this);
+    CONFIG.queries[`${modulePrefix}.showImageToPlayers`] = this.handleShowImageToPlayers.bind(this);
     CONFIG.queries[`${modulePrefix}.getLineOfSight`] = this.handleGetLineOfSight.bind(this);
     CONFIG.queries[`${modulePrefix}.getItemIdentification`] = this.handleGetItemIdentification.bind(this);
     CONFIG.queries[`${modulePrefix}.setItemIdentification`] = this.handleSetItemIdentification.bind(this);
@@ -368,6 +371,71 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to compute line of sight: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleGetWorldTime(): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getWorldTime();
+    } catch (error) {
+      throw new Error(
+        `Failed to get world time: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleSetWorldTime(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      let allowed = false;
+      try {
+        allowed = !!(game as any).settings.get('foundry-mcp-bridge', 'allowWorldTimeWrites');
+      } catch (_e) {
+        allowed = false;
+      }
+      if (!allowed) {
+        return {
+          error:
+            'World time changes are disabled. Enable "Allow World Time Changes" in the Foundry MCP Bridge module settings.',
+          success: false,
+        };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.setWorldTime(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to set world time: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleShowImageToPlayers(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      let allowed = false;
+      try {
+        allowed = !!(game as any).settings.get('foundry-mcp-bridge', 'allowPlayerDisplay');
+      } catch (_e) {
+        allowed = false;
+      }
+      if (!allowed) {
+        return {
+          error:
+            'Showing images to players is disabled. Enable "Allow Showing Images to Players" in the Foundry MCP Bridge module settings.',
+          success: false,
+        };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.showImageToPlayers(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to show image: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

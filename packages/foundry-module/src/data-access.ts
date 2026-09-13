@@ -3944,6 +3944,18 @@ export class FoundryDataAccess {
         level: actor.system?.details?.level?.value ?? null,
         sizeCategory: actor.system?.traits?.size?.value ?? null,
         creatureTraits: actor.system?.traits?.value ?? [],
+        // Skill modifiers belong in the DEFAULT payload: they were previously
+        // only present under detail:'full', so a GM that needed Athletics or
+        // Performance had to derive it and could get it wrong (missing item
+        // bonuses or the ability modifier entirely). Compact name -> total map;
+        // detail:'full' still gives the richer {mod, rank} form.
+        skills: actor.skills
+          ? Object.fromEntries(
+              Object.entries(actor.skills as Record<string, any>)
+                .filter(([, v]) => v && typeof v.mod === 'number')
+                .map(([k, v]) => [k, v.mod])
+            )
+          : null,
         saves: actor.saves
           ? Object.fromEntries(
               ['fortitude', 'reflex', 'will']
@@ -4919,6 +4931,160 @@ export class FoundryDataAccess {
               ? 'No ray is truly clear: every unblocked ray only grazes wall geometry (corner or face), so nothing is really visible.'
               : 'All 16 rays cross a sight-blocking wall: no line of sight.',
     };
+  }
+
+
+  /**
+   * Read the world clock. PF2e layers a Golarion calendar over Foundry's raw
+   * `game.time.worldTime` seconds offset, so report both: the formatted
+   * in-world date/time a GM would read aloud, and the numeric offset needed to
+   * compute changes.
+   */
+  async getWorldTime(): Promise<any> {
+    const clock: any = (game as any).pf2e?.worldClock ?? null;
+    const worldTimeSeconds = (game as any).time?.worldTime ?? 0;
+    const base: any = {
+      worldTimeSeconds,
+      // real-world timestamp of the scene's "now", if the system tracks one
+      isoTimestamp: null,
+      formatted: null,
+      weekday: null,
+      day: null,
+      month: null,
+      year: null,
+      era: null,
+      time: null,
+      dateTheme: null,
+    };
+    if (!clock) {
+      // Non-PF2e systems: only the raw offset is meaningful
+      return { ...base, system: (game as any).system?.id ?? null };
+    }
+    const dt = clock.worldTime;
+    const timeConvention = clock.timeConvention ?? 24;
+    const time =
+      timeConvention === 12 ? dt.toFormat('hh:mm:ss a') : dt.toFormat('HH:mm:ss');
+    const day = dt.day;
+    const ordinal = (n: number) => {
+      const rem100 = n % 100;
+      if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+      return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+    };
+    return {
+      ...base,
+      isoTimestamp: dt.toISO(),
+      weekday: clock.weekday,
+      day,
+      month: clock.month,
+      year: clock.year,
+      era: clock.era,
+      time,
+      dateTheme: clock.dateTheme,
+      formatted: `${clock.weekday} ${ordinal(day)} of ${clock.month} ${clock.year} ${clock.era} ${time}`.trim(),
+      system: (game as any).system?.id ?? null,
+    };
+  }
+
+  /**
+   * Advance or rewind the world clock. Either a relative amount (any mix of
+   * days/hours/minutes/seconds, negative to rewind) or an absolute time of day.
+   * Gated by a scoped module setting, like the other write tools.
+   */
+  async setWorldTime(data: {
+    days?: number;
+    hours?: number;
+    minutes?: number;
+    seconds?: number;
+    setTimeOfDay?: string;
+    nextDay?: boolean;
+  }): Promise<any> {
+    const before = await this.getWorldTime();
+    let delta = 0;
+
+    if (data.setTimeOfDay) {
+      const clock: any = (game as any).pf2e?.worldClock;
+      if (!clock) throw new Error('setTimeOfDay requires the PF2e world clock');
+      const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(data.setTimeOfDay.trim());
+      if (!m) throw new Error(`Invalid setTimeOfDay "${data.setTimeOfDay}"; expected HH:MM or HH:MM:SS`);
+      const [h, mi, se] = [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)];
+      if (h > 23 || mi > 59 || se > 59) throw new Error('setTimeOfDay is out of range');
+      const now = clock.worldTime;
+      let target = now.set({ hour: h, minute: mi, second: se, millisecond: 0 });
+      if (data.nextDay || target <= now) target = target.plus({ days: 1 });
+      delta = Math.round(target.diff(now, 'seconds').seconds);
+    } else {
+      delta =
+        Math.trunc(data.seconds ?? 0) +
+        Math.trunc(data.minutes ?? 0) * 60 +
+        Math.trunc(data.hours ?? 0) * 3600 +
+        Math.trunc(data.days ?? 0) * 86400;
+      if (delta === 0) {
+        throw new Error(
+          'Provide a non-zero days/hours/minutes/seconds amount, or setTimeOfDay'
+        );
+      }
+    }
+
+    if (typeof (game as any).time?.advance !== 'function') {
+      throw new Error('game.time.advance is unavailable');
+    }
+    await (game as any).time.advance(delta);
+
+    const after = await this.getWorldTime();
+    return { advancedBySeconds: delta, before: before.formatted, after: after.formatted, now: after };
+  }
+
+  /**
+   * Show an image to all players via Foundry's ImagePopout share, the same
+   * mechanism as the "Show Players" button. Broadcasts; does not alter world data.
+   */
+  async showImageToPlayers(data: {
+    image: string;
+    title?: string;
+    uuid?: string;
+    showToGM?: boolean;
+  }): Promise<any> {
+    if (!data.image || typeof data.image !== 'string') {
+      throw new Error('image path or URL is required');
+    }
+    const g: any = globalThis as any;
+    // ImagePopout has moved namespaces across Foundry versions, and shareImage is
+    // an INSTANCE method (the prototype has it; there is no static). The working
+    // pattern is the same one a GM macro uses:
+    //   new ImagePopout(src, { title, shareable: true, uuid }).render(true) then
+    //   .shareImage() to broadcast.
+    const Popout: any =
+      g.foundry?.applications?.apps?.ImagePopout ??
+      g.foundry?.applications?.api?.ImagePopout ??
+      g.ImagePopout;
+    if (!Popout) {
+      throw new Error('ImagePopout is unavailable in this Foundry version');
+    }
+
+    const title = data.title ?? data.image.split('/').pop() ?? 'Image';
+    let method: string;
+
+    if (typeof Popout.shareImage === 'function') {
+      // Older Foundry exposed a static; keep it as a fallback path.
+      await Popout.shareImage({ image: data.image, title, uuid: data.uuid, showTitle: true });
+      method = 'ImagePopout.shareImage (static)';
+    } else {
+      const options: any = { title, shareable: true };
+      if (data.uuid) options.uuid = data.uuid;
+      const popout = new Popout(data.image, options);
+      // Render locally first, matching the macro: shareImage broadcasts the
+      // popout's own state, so the instance needs to exist properly first.
+      if (data.showToGM !== false) {
+        await popout.render(true);
+      }
+      await popout.shareImage();
+      method = 'ImagePopout#shareImage (instance)';
+    }
+
+    const users = ((game as any).users?.contents ?? []).filter(
+      (u: any) => u.active && !u.isGM
+    ).length;
+    return { shared: true, image: data.image, title, method, activePlayerCount: users };
   }
 
   async getWorldInfo(): Promise<WorldInfo> {

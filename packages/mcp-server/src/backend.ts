@@ -1589,6 +1589,21 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'get-world-time':
+                  result = await sceneTools.handleGetWorldTime(args);
+
+                  break;
+
+                case 'set-world-time':
+                  result = await sceneTools.handleSetWorldTime(args);
+
+                  break;
+
+                case 'show-image-to-players':
+                  result = await sceneTools.handleShowImageToPlayers(args);
+
+                  break;
+
                 case 'get-line-of-sight':
                   result = await sceneTools.handleGetLineOfSight(args);
 

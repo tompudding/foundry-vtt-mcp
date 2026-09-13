@@ -163,6 +163,43 @@ export class SceneTools {
         },
       },
       {
+        name: 'get-world-time',
+        description:
+          'Read the in-world date and time. Returns the formatted calendar date a GM would read aloud (weekday, day, month, year, era), the clock time, and the raw worldTimeSeconds offset. PF2e worlds report the Golarion calendar; other systems return only the raw offset.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      {
+        name: 'set-world-time',
+        description:
+          'Advance or rewind the world clock. Either a relative amount (days/hours/minutes/seconds, any mix, negative values rewind) or setTimeOfDay ("HH:MM" / "HH:MM:SS") to jump to that time of day. setTimeOfDay moves forward to the next occurrence; pass nextDay: true to force tomorrow. Returns the before and after dates. Requires the module "Allow World Time Changes" setting.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            days: { type: 'number', description: 'Days to advance (negative rewinds)' },
+            hours: { type: 'number', description: 'Hours to advance (negative rewinds)' },
+            minutes: { type: 'number', description: 'Minutes to advance (negative rewinds)' },
+            seconds: { type: 'number', description: 'Seconds to advance (negative rewinds)' },
+            setTimeOfDay: { type: 'string', description: 'Absolute time of day, e.g. "06:00" for dawn. Moves forward to the next occurrence.' },
+            nextDay: { type: 'boolean', description: 'With setTimeOfDay, force the following day even if the time is still ahead today', default: false },
+          },
+        },
+      },
+      {
+        name: 'show-image-to-players',
+        description:
+          'Show an image to all connected players, exactly like the "Show Players" button - opens it in their image viewer. Use for handouts, maps, portraits and scenario art. image is a path in the Foundry data directory (e.g. "modules/my-adventure/art/letter.webp") or a URL. Requires the module "Allow Showing Images to Players" setting. NOTE: this is player-visible, so check it is not a spoiler before sharing.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            image: { type: 'string', description: 'Image path or URL to display' },
+            title: { type: 'string', description: 'Caption shown above the image; defaults to the filename' },
+            uuid: { type: 'string', description: 'Optional document uuid the image belongs to (e.g. an actor uuid, so the popout links back to it)' },
+            showToGM: { type: 'boolean', description: "Also open the image on the GM's own screen, so the GM sees what the players see", default: true },
+          },
+          required: ['image'],
+        },
+      },
+      {
         name: 'get-world-info',
         description: 'Get basic information about the Foundry world and system',
         inputSchema: {
@@ -331,6 +368,58 @@ export class SceneTools {
       this.logger.error('Failed to get scene walls', error);
       throw new Error(
         `Failed to get scene walls: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleGetWorldTime(_args: any): Promise<any> {
+    this.logger.info('Getting world time');
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getWorldTime', {});
+    } catch (error) {
+      this.logger.error('Failed to get world time', error);
+      throw new Error(
+        `Failed to get world time: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleSetWorldTime(args: any): Promise<any> {
+    const schema = z.object({
+      days: z.number().optional(),
+      hours: z.number().optional(),
+      minutes: z.number().optional(),
+      seconds: z.number().optional(),
+      setTimeOfDay: z.string().optional(),
+      nextDay: z.boolean().default(false),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Setting world time', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.setWorldTime', params);
+    } catch (error) {
+      this.logger.error('Failed to set world time', error);
+      throw new Error(
+        `Failed to set world time: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleShowImageToPlayers(args: any): Promise<any> {
+    const schema = z.object({
+      image: z.string(),
+      title: z.string().optional(),
+      uuid: z.string().optional(),
+      showToGM: z.boolean().default(true),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Showing image to players', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.showImageToPlayers', params);
+    } catch (error) {
+      this.logger.error('Failed to show image', error);
+      throw new Error(
+        `Failed to show image: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

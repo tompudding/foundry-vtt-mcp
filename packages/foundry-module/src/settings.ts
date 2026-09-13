@@ -191,6 +191,24 @@ export class ModuleSettings {
     // SECTION 1: BASIC SETTINGS
     // ============================================================================
 
+    game.settings.register(this.moduleId, 'allowWorldTimeWrites', {
+      name: 'Allow World Time Changes',
+      hint: 'Permit the MCP client to advance or rewind the world clock, even while general write operations are disabled. No other writes are enabled by this setting.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: false,
+    });
+
+    game.settings.register(this.moduleId, 'allowPlayerDisplay', {
+      name: 'Allow Showing Images to Players',
+      hint: 'Permit the MCP client to push an image to all connected players (the same as the Show Players button). Player-visible, so off by default.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: false,
+    });
+
     game.settings.register(this.moduleId, 'allowCombatWrites', {
       name: 'Allow Combat Writes',
       hint: 'Permit the MCP client to apply damage and healing to tokens, even while general write operations are disabled. No other writes are enabled by this setting.',
@@ -510,9 +528,14 @@ export class ModuleSettings {
       errors.push('Server port must be between 1024 and 65535');
     }
 
+    // The setting is REGISTERED with range 1-50, so the validator must accept the
+    // same range: rejecting >10 made any value the settings UI happily offered
+    // abort startup with "Max actors per request must be between 1 and 10".
     const maxActors = this.getSetting('maxActorsPerRequest');
-    if (!maxActors || typeof maxActors !== 'number' || maxActors < 1 || maxActors > 10) {
-      errors.push('Max actors per request must be between 1 and 10');
+    if (!maxActors || typeof maxActors !== 'number' || maxActors < 1 || maxActors > 50) {
+      errors.push(
+        `Max actors per request must be between 1 and 50 (currently ${String(maxActors)})`
+      );
     }
 
     const heartbeat = this.getSetting('heartbeatInterval');
