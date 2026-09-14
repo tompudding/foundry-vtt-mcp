@@ -36,6 +36,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.applyTokenDamage`] = this.handleApplyTokenDamage.bind(this);
     CONFIG.queries[`${modulePrefix}.getSceneWalls`] = this.handleGetSceneWalls.bind(this);
     CONFIG.queries[`${modulePrefix}.getWorldTime`] = this.handleGetWorldTime.bind(this);
+    CONFIG.queries[`${modulePrefix}.getSceneRegions`] = this.handleGetSceneRegions.bind(this);
+    CONFIG.queries[`${modulePrefix}.testTokenInRegion`] = this.handleTestTokenInRegion.bind(this);
     CONFIG.queries[`${modulePrefix}.setWorldTime`] = this.handleSetWorldTime.bind(this);
     CONFIG.queries[`${modulePrefix}.showImageToPlayers`] = this.handleShowImageToPlayers.bind(this);
     CONFIG.queries[`${modulePrefix}.getLineOfSight`] = this.handleGetLineOfSight.bind(this);
@@ -436,6 +438,32 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to show image: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleGetSceneRegions(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getSceneRegions(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to get scene regions: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleTestTokenInRegion(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.testTokenInRegion(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to test token in region: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

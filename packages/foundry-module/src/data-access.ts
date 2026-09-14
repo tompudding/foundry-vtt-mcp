@@ -3595,20 +3595,8 @@ export class FoundryDataAccess {
     // senses, spellcasting, GM notes. Gated behind detail: 'full' so the
     // default per-round poll stays small. Each section is independently
     // guarded: a failure in one never costs the rest of the payload.
-    const stripHtml = (s: any, cap = 1500): string | undefined => {
-      if (typeof s !== 'string' || !s.trim()) return undefined;
-      const text = s
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<\/p>/gi, '\n')
-        .replace(/@UUID\[[^\]]*\]\{([^}]*)\}/g, '$1')
-        .replace(/@Check\[[^\]]*\]/g, '')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      return text.length > cap ? text.slice(0, cap) + '…' : text;
-    };
+    const stripHtml = (s: any, cap = 1500): string | undefined =>
+      this.enricherToText(s, cap) ?? undefined;
     // Distinguish "could not read this" from "read it, there's nothing there":
     // a guard that throws returns null (unavailable), while a successful read
     // returns whatever it found ([] / {} meaning genuinely empty). Objects whose
@@ -3632,6 +3620,43 @@ export class FoundryDataAccess {
     const fullDetail = (actor: any) => {
       const out: any = {};
 
+      // Attack riders: melee items carry system.attackEffects.value, a list of
+      // slugs like "putrid-plague". PF2e resolves each against a NON-MELEE item
+      // on the actor (creature-specific abilities such as a disease live there),
+      // falling back to the bestiary ability glossary. Without these, a bite
+      // that inflicts a disease looks like a plain bite.
+      const sluggify = (str: string): string =>
+        String(str)
+          .toLowerCase()
+          .replace(/['\u2019]/g, '')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '');
+      const titleCase = (slug: string): string =>
+        slug.split('-').filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      const resolveAttackEffects = (raw: any): any[] => {
+        const slugs: string[] = Array.isArray(raw) ? raw : Array.from(raw ?? []);
+        return slugs.map((entry: any) => {
+          const slug = sluggify(typeof entry === 'string' ? entry : (entry?.value ?? ''));
+          const match = ((actor.items?.contents ?? actor.items ?? []) as any[]).find(
+            (i: any) => i?.type !== 'melee' && (i?.slug ?? sluggify(i?.name ?? '')) === slug
+          );
+          if (match) {
+            return {
+              slug,
+              name: match.name,
+              description: stripHtml(match.description ?? match.system?.description?.value ?? ''),
+              source: 'actor ability',
+            };
+          }
+          return {
+            slug,
+            name: titleCase(slug),
+            description: null,
+            source: 'bestiary ability glossary (not on this actor)',
+          };
+        });
+      };
+
       // Strikes: prepared actions first (PC + NPC), else raw NPC attack items
       out.strikes = guard(() => {
         const prepared = (actor.system?.actions ?? []) as any[];
@@ -3646,6 +3671,9 @@ export class FoundryDataAccess {
               : undefined,
             traits: (s.traits ?? []).map((t: any) => t.name ?? t.label ?? t),
             ready: s.ready ?? undefined,
+            attackEffects: resolveAttackEffects(
+              s.item?.system?.attackEffects?.value ?? s.attackEffects ?? []
+            ),
           }));
         }
         return (actor.itemTypes?.melee ?? []).map((m: any) => ({
@@ -3655,6 +3683,7 @@ export class FoundryDataAccess {
             .map((d: any) => `${d.damage} ${d.damageType}`)
             .join(', '),
           traits: m.system?.traits?.value ?? [],
+          attackEffects: resolveAttackEffects(m.system?.attackEffects?.value ?? []),
         }));
       });
 
@@ -3869,42 +3898,7 @@ export class FoundryDataAccess {
       const hazardInfo = (() => {
         if (actor.type !== 'hazard') return undefined;
         const d = actor.system?.details ?? {};
-        const clean = (s: any): string | null => {
-          if (typeof s !== 'string' || !s.trim()) return null;
-          const text = s
-            .replace(/<br\s*\/?>/gi, '\n')
-            .replace(/<\/p>/gi, '\n')
-            .replace(/@UUID\[[^\]\{]*\]\{([^}]*)\}/g, '$1')
-            .replace(/@UUID\[[^\]]*?\.([^\].]+)\]/g, '$1')
-            .replace(/@Check\[([^\]]*)\](?:\{([^}]*)\})?/g, (_m, spec, label) => {
-              if (label) return label;
-              const parts = Object.fromEntries(
-                String(spec)
-                  .split('|')
-                  .filter((p: string) => p.includes(':'))
-                  .map((p: string) => p.split(':', 2))
-              );
-              const raw = parts.type ? String(parts.type) : 'check';
-              const type = raw.charAt(0).toUpperCase() + raw.slice(1);
-              return parts.dc ? `DC ${parts.dc} ${type}` : `${type} check`;
-            })
-            .replace(
-              // allow one level of nesting: @Damage[4d6[bludgeoning]]
-              /@Damage\[((?:[^[\]]|\[[^\]]*\])*)\](?:\{[^}]*\})?/g,
-              (_m, body) =>
-                String(body)
-                  .replace(/[[\]()]/g, ' ')
-                  .replace(/\s+/g, ' ')
-                  .trim()
-            )
-            .replace(/\[\[\/b?r ([^\]]*)\]\](?:\{([^}]*)\})?/g, (_m, f, l) => l || f)
-            .replace(/<[^>]+>/g, '')
-            .replace(/&nbsp;/g, ' ')
-            .replace(/&amp;/g, '&')
-            .replace(/\n{3,}/g, '\n\n')
-            .trim();
-          return text || null;
-        };
+        const clean = (s: any): string | null => this.enricherToText(s);
         return {
           description: clean(d.description),
           disable: clean(d.disable),
@@ -3965,6 +3959,14 @@ export class FoundryDataAccess {
           : null,
         // null = this actor type has no such data / it could not be read.
         // An empty array or object means "read successfully, nothing there".
+        // Region membership, so an ordinary state poll shows area-effect
+        // containment without a second call.
+        regions: t.regions
+          ? Array.from(t.regions as Iterable<any>).map((r: any) => ({
+              regionId: r.id ?? null,
+              name: r.name ?? null,
+            }))
+          : [],
         hazard: hazardInfo ?? null,
         ...(data.detail === 'full' ? fullDetail(actor) : {}),
       };
@@ -5085,6 +5087,285 @@ export class FoundryDataAccess {
       (u: any) => u.active && !u.isGM
     ).length;
     return { shared: true, image: data.image, title, method, activePlayerCount: users };
+  }
+
+
+  /** Shared helpers for region reporting. */
+  private regionElevationBand(region: any): { bottom: number | null; top: number | null; topInclusive: boolean } {
+    const e = region.elevation ?? {};
+    return {
+      // null means UNBOUNDED in that direction, not zero
+      bottom: typeof e.bottom === 'number' ? e.bottom : null,
+      top: typeof e.top === 'number' ? e.top : null,
+      topInclusive: !!e.topInclusive,
+    };
+  }
+
+  private elevationOutsideBand(region: any, elevation: number): boolean {
+    const { bottom, top, topInclusive } = this.regionElevationBand(region);
+    if (bottom !== null && elevation < bottom) return true;
+    if (top !== null) {
+      if (topInclusive ? elevation > top : elevation >= top) return true;
+    }
+    return false;
+  }
+
+  /** Enum labels are read from CONST at runtime rather than hard-coded, since
+   * these numbers have shifted between Foundry versions. */
+  private constLabel(group: string, value: any): string | null {
+    try {
+      const table = (CONST as any)?.[group];
+      if (!table || typeof value !== 'number') return null;
+      const hit = Object.entries(table).find(([, v]) => v === value);
+      return hit ? hit[0].toLowerCase() : null;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  private describeRegion(region: any, gridSize: number): any {
+    const px = (n: any) => (typeof n === 'number' ? +(n / gridSize).toFixed(2) : null);
+    const shapes = (region.shapes ?? []).map((sh: any) => {
+      const out: any = { ...sh };
+      // add grid-square equivalents alongside the raw pixel geometry
+      if (typeof sh.x === 'number') out.gx = px(sh.x);
+      if (typeof sh.y === 'number') out.gy = px(sh.y);
+      if (typeof sh.radius === 'number') out.radiusSquares = px(sh.radius);
+      if (typeof sh.width === 'number') out.widthSquares = px(sh.width);
+      if (typeof sh.height === 'number') out.heightSquares = px(sh.height);
+      if (Array.isArray(sh.points)) {
+        out.pointsSquares = sh.points.map((v: number) => px(v));
+      }
+      return out;
+    });
+    const tokensInside = Array.from(region.tokens ?? []).map((t: any) => ({
+      tokenId: t.id,
+      name: t.name,
+      elevation: t.elevation ?? 0,
+      disposition: ['hostile', 'neutral', 'friendly'][(t.disposition ?? 0) + 1] ?? 'unknown',
+    }));
+    return {
+      regionId: region.id,
+      name: region.name,
+      shapes,
+      elevation: this.regionElevationBand(region),
+      visibility: region.visibility ?? null,
+      visibilityLabel: this.constLabel('REGION_VISIBILITY', region.visibility),
+      hidden: !!region.hidden,
+      locked: !!region.locked,
+      color: region.color ?? null,
+      // v14 multi-level scenes: which level(s) the region belongs to
+      levels: Array.isArray(region.levels) ? region.levels.slice() : Array.from(region.levels ?? []),
+      behaviors: Array.from(region.behaviors ?? []).map((b: any) => ({
+        type: b.type,
+        name: b.name ?? null,
+        disabled: !!b.disabled,
+      })),
+      tokenCount: tokensInside.length,
+      tokensInside,
+    };
+  }
+
+  /**
+   * List the scene's regions with geometry, elevation band, behaviors and -
+   * most usefully - the tokens Foundry currently considers inside each one.
+   * Membership comes from Foundry's own bookkeeping, so it matches the canvas
+   * exactly rather than re-deriving cone/polygon maths.
+   */
+  async getSceneRegions(data: { regionId?: string; regionName?: string } = {}): Promise<any> {
+    const scene: any = (game as any).scenes?.current;
+    if (!scene) throw new Error('No active scene');
+    const gridSize = scene.grid?.size || 100;
+    let regions: any[] = Array.from(scene.regions ?? []);
+    if (data.regionId) {
+      regions = regions.filter(r => r.id === data.regionId);
+    } else if (data.regionName) {
+      const q = data.regionName.toLowerCase();
+      const exact = regions.filter(r => (r.name ?? '').toLowerCase() === q);
+      regions = exact.length ? exact : regions.filter(r => (r.name ?? '').toLowerCase().includes(q));
+    }
+    if ((data.regionId || data.regionName) && regions.length === 0) {
+      throw new Error('No matching region on the active scene');
+    }
+    return {
+      scene: scene.name,
+      gridSize,
+      unitsPerSquare: scene.grid?.distance ?? 5,
+      regionCount: regions.length,
+      regions: regions.map(r => this.describeRegion(r, gridSize)),
+    };
+  }
+
+  /**
+   * Is a token inside a region? Reports Foundry's own membership AND a
+   * geometric test of the token's centre and its four corners, which matters
+   * for area effects: a Large creature can clip a burst with a single square.
+   *
+   * `inside` is the 2-D geometric answer. When the region has an elevation band
+   * the token sits outside, `inside` stays true and outsideElevationBand is set,
+   * so the reason is visible rather than silently reported as a miss.
+   */
+  async testTokenInRegion(data: {
+    tokenId?: string;
+    tokenName?: string;
+    selected?: boolean;
+    targeted?: boolean;
+    regionId?: string;
+    regionName?: string;
+  }): Promise<any> {
+    const scene: any = (game as any).scenes?.current;
+    if (!scene) throw new Error('No active scene');
+    const gridSize = scene.grid?.size || 100;
+
+    const lookup: any = {};
+    if (data.selected) lookup.selected = true;
+    if (data.targeted) lookup.targeted = true;
+    if (data.tokenId) lookup.tokenId = data.tokenId;
+    if (data.tokenName) lookup.tokenName = data.tokenName;
+    if (!Object.keys(lookup).length) {
+      throw new Error('Provide tokenId, tokenName, selected: true, or targeted: true');
+    }
+    const state = await this.getTokenState(lookup);
+    if (state.ambiguous) return state;
+    const tokenIds: string[] = state.tokens ? state.tokens.map((t: any) => t.tokenId) : [state.tokenId];
+
+    let regions: any[] = Array.from(scene.regions ?? []);
+    if (data.regionId) {
+      regions = regions.filter(r => r.id === data.regionId);
+    } else if (data.regionName) {
+      const q = data.regionName.toLowerCase();
+      const exact = regions.filter(r => (r.name ?? '').toLowerCase() === q);
+      regions = exact.length ? exact : regions.filter(r => (r.name ?? '').toLowerCase().includes(q));
+    }
+    if (regions.length === 0) throw new Error('No matching region on the active scene');
+
+    const results: any[] = [];
+    for (const id of tokenIds) {
+      const tokenDoc: any = scene.tokens?.get(id);
+      if (!tokenDoc) continue;
+      const elevation = tokenDoc.elevation ?? 0;
+      const w = (tokenDoc.width ?? 1) * gridSize;
+      const h = (tokenDoc.height ?? 1) * gridSize;
+      const centre = { x: tokenDoc.x + w / 2, y: tokenDoc.y + h / 2 };
+      const corners = [
+        { x: tokenDoc.x, y: tokenDoc.y },
+        { x: tokenDoc.x + w, y: tokenDoc.y },
+        { x: tokenDoc.x, y: tokenDoc.y + h },
+        { x: tokenDoc.x + w, y: tokenDoc.y + h },
+      ];
+
+      for (const region of regions) {
+        // Foundry's own membership set (respects elevation and behaviors)
+        const membership = Array.from(region.tokens ?? []).some((t: any) => t.id === id);
+
+        // Geometric test, ignoring elevation, on the document then the placeable
+        const test = (pt: { x: number; y: number }): boolean | null => {
+          for (const target of [region, region.object]) {
+            if (!target || typeof target.testPoint !== 'function') continue;
+            for (const args of [[{ ...pt, elevation }], [pt, elevation], [pt]]) {
+              try {
+                const r = (target.testPoint as any)(...args);
+                if (typeof r === 'boolean') return r;
+              } catch (_e) {
+                /* signature differs; try the next form */
+              }
+            }
+          }
+          return null;
+        };
+
+        const centreInside = test(centre);
+        const cornerResults = corners.map(c => test(c));
+        const cornersInside = cornerResults.filter(r => r === true).length;
+        const geometricKnown = centreInside !== null || cornerResults.some(r => r !== null);
+        const inside = geometricKnown ? !!centreInside || cornersInside > 0 : membership;
+        const outsideBand = this.elevationOutsideBand(region, elevation);
+
+        results.push({
+          token: { tokenId: id, name: tokenDoc.name, elevation },
+          region: {
+            regionId: region.id,
+            name: region.name,
+            elevation: this.regionElevationBand(region),
+          },
+          inside,
+          centreInside: centreInside ?? null,
+          cornersInside,
+          totalCorners: 4,
+          partial: inside && (cornersInside > 0 && cornersInside < 4),
+          outsideElevationBand: outsideBand,
+          foundryMembership: membership,
+          method: geometricKnown ? 'testPoint + membership' : 'membership only',
+          note: outsideBand
+            ? 'Geometrically inside, but the token\'s elevation is outside the region\'s band, so Foundry excludes it.'
+            : inside && !membership
+              ? 'Geometrically inside but absent from Foundry\'s membership set (region behaviors or elevation may exclude it).'
+              : null,
+        });
+      }
+    }
+    return results.length === 1 ? results[0] : { results };
+  }
+
+  /**
+   * Convert Foundry/PF2e enricher syntax and HTML into readable text.
+   * Shared by every description path: ability text, effects, hazards, notes.
+   * Enrichers must be RENDERED, not stripped - deleting @Check silently removes
+   * save DCs from disease, poison and breath-weapon text, which is exactly the
+   * information a GM needs mid-combat.
+   */
+  private enricherToText(input: any, cap = 1500): string | null {
+    if (typeof input !== 'string' || !input.trim()) return null;
+    // PF2e parses inline params with { first: "type" }: the FIRST segment is the
+    // type even without a "type:" prefix, so @Check[fortitude|dc:14] is valid
+    // and common in published content. Reading only key:value pairs lost it.
+    const inlineParams = (spec: string): Record<string, string> => {
+      const segments = String(spec).split('|').map(x => x.trim()).filter(Boolean);
+      const out: Record<string, string> = {};
+      segments.forEach((seg, i) => {
+        const idx = seg.indexOf(':');
+        if (idx === -1) {
+          if (i === 0) out.type = seg;
+        } else {
+          out[seg.slice(0, idx)] = seg.slice(idx + 1);
+        }
+      });
+      return out;
+    };
+    const text = input
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/@UUID\[[^\]{]*\]\{([^}]*)\}/g, '$1')
+      .replace(/@UUID\[[^\]]*?\.([^\].]+)\]/g, '$1')
+      .replace(/@Check\[([^\]]*)\](?:\{([^}]*)\})?/g, (_m, spec, label) => {
+        if (label) return label;
+        const parts = inlineParams(spec);
+        const raw = parts.type ? String(parts.type) : 'check';
+        const type = raw.charAt(0).toUpperCase() + raw.slice(1);
+        const basic = String(parts.basic) === 'true' ? 'basic ' : '';
+        return parts.dc ? `DC ${parts.dc} ${basic}${type}` : `${basic}${type} check`;
+      })
+      .replace(
+        /@Damage\[((?:[^[\]]|\[[^\]]*\])*)\](?:\{[^}]*\})?/g,
+        (_m, body) => String(body).replace(/[[\]()]/g, ' ').replace(/\s+/g, ' ').trim()
+      )
+      .replace(/@Template\[([^\]]*)\](?:\{([^}]*)\})?/g, (_m, spec, label) => {
+        if (label) return label;
+        const parts = inlineParams(spec);
+        return `${parts.distance ?? '?'}-foot ${parts.type ?? 'area'}`;
+      })
+      .replace(/\[\[\/(?:gm)?b?r\s+([^\]]*)\]\](?:\{([^}]*)\})?/g, (_m, formula, label) =>
+        label ? label : String(formula).replace(/#.*$/, '').trim()
+      )
+      .replace(/@Localize\[[^\]]*\]/g, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    if (!text) return null;
+    return text.length > cap ? text.slice(0, cap) + '\u2026' : text;
   }
 
   async getWorldInfo(): Promise<WorldInfo> {

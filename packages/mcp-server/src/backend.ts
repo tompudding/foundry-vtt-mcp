@@ -1594,6 +1594,16 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'get-scene-regions':
+                  result = await sceneTools.handleGetSceneRegions(args);
+
+                  break;
+
+                case 'test-token-in-region':
+                  result = await sceneTools.handleTestTokenInRegion(args);
+
+                  break;
+
                 case 'set-world-time':
                   result = await sceneTools.handleSetWorldTime(args);
 

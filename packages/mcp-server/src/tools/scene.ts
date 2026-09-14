@@ -200,6 +200,34 @@ export class SceneTools {
         },
       },
       {
+        name: 'get-scene-regions',
+        description:
+          'List the regions on the active scene with their shape geometry (pixels and grid squares), elevation band, visibility, behaviors, and the tokens Foundry currently considers INSIDE each one. Membership comes from Foundry\'s own bookkeeping, so it matches what the GM sees highlighted on the canvas. Use this to confirm which creatures an area effect covers. Filter with regionId or regionName.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            regionId: { type: 'string', description: 'Only this region' },
+            regionName: { type: 'string', description: 'Region name (exact, then substring)' },
+          },
+        },
+      },
+      {
+        name: 'test-token-in-region',
+        description:
+          'Test whether a token is inside a region - the direct question for adjudicating area effects. Checks the token\'s centre AND its four corners, so a Large creature clipping the edge is reported as partial. Identify the token by tokenId, tokenName, selected or targeted, and the region by regionId or regionName (omit to test against every region). inside is the 2-D geometric answer; if the region has an elevation band the token is outside, inside stays true and outsideElevationBand is set so the reason is visible. foundryMembership reports Foundry\'s own set for comparison.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tokenId: { type: 'string' },
+            tokenName: { type: 'string' },
+            selected: { type: 'boolean', description: 'Use the selected token(s)', default: false },
+            targeted: { type: 'boolean', description: 'Use the targeted token(s)', default: false },
+            regionId: { type: 'string' },
+            regionName: { type: 'string' },
+          },
+        },
+      },
+      {
         name: 'get-world-info',
         description: 'Get basic information about the Foundry world and system',
         inputSchema: {
@@ -420,6 +448,44 @@ export class SceneTools {
       this.logger.error('Failed to show image', error);
       throw new Error(
         `Failed to show image: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleGetSceneRegions(args: any): Promise<any> {
+    const schema = z.object({
+      regionId: z.string().optional(),
+      regionName: z.string().optional(),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Getting scene regions', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getSceneRegions', params);
+    } catch (error) {
+      this.logger.error('Failed to get scene regions', error);
+      throw new Error(
+        `Failed to get scene regions: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleTestTokenInRegion(args: any): Promise<any> {
+    const schema = z.object({
+      tokenId: z.string().optional(),
+      tokenName: z.string().optional(),
+      selected: z.boolean().default(false),
+      targeted: z.boolean().default(false),
+      regionId: z.string().optional(),
+      regionName: z.string().optional(),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Testing token in region', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.testTokenInRegion', params);
+    } catch (error) {
+      this.logger.error('Failed to test token in region', error);
+      throw new Error(
+        `Failed to test token in region: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }
