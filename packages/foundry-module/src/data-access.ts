@@ -4260,6 +4260,15 @@ export class FoundryDataAccess {
         actorType: actor.type,
         hp: hp ? { value: hp.value, max: hp.max, temp: hp.temp ?? 0 } : null,
         ac: actor.system?.attributes?.ac?.value ?? null,
+        // Hardness reduces every instance of damage before IWR, so it belongs
+        // next to AC in the DEFAULT payload rather than buried under
+        // detail:'full'.defenses - a GM that cannot see it is surprised when
+        // applied damage comes out lower than rolled.
+        hardness: (() => {
+          const h = actor.system?.attributes?.hardness;
+          const value = typeof h === 'object' && h !== null ? h.value : h;
+          return typeof value === 'number' ? value : 0;
+        })(),
         conditions: pf2Conditions,
         statuses,
         effects,
