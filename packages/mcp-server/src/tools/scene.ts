@@ -228,6 +228,57 @@ export class SceneTools {
         },
       },
       {
+        name: 'set-door-state',
+        description:
+          'Open, close or lock a door. Identify it by wallId (from get-scene-walls with doorsOnly: true), by nearest: {x, y} scene coordinates, or by tokenId to act on the door nearest that token - the chosen door and its distance are reported back. Updates the wall document so the usual door sound, animation and vision refresh happen. RULINGS: state "locked" on an open door shuts and locks it (a door cannot be both); a LOCKED door is only ever opened by an explicit state "open", never implicitly, and wasLocked is reported. reveal: true converts a SECRET door into a normal one so players can see and use it once discovered; doorType sets the type in either direction, so a door the party never found can be hidden again. The type is never changed unless asked. Returns a verified read-back with previous and new state. Requires the module "Allow Door Changes" setting.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            wallId: { type: 'string', description: 'Wall document id of the door (preferred)' },
+            nearest: {
+              type: 'object',
+              description: 'Scene pixel coordinates; acts on the nearest door',
+              properties: { x: { type: 'number' }, y: { type: 'number' } },
+              required: ['x', 'y'],
+            },
+            tokenId: { type: 'string', description: 'Act on the door nearest this token' },
+            state: { type: 'string', enum: ['open', 'closed', 'locked'], description: 'Desired door state' },
+            reveal: { type: 'boolean', description: 'Convert a secret door into a normal one (discovery). Sugar for doorType: "door".', default: false },
+            doorType: { type: 'string', enum: ['door', 'secret'], description: 'Set the door type in either direction: "door" reveals a secret door, "secret" hides a normal one again (e.g. re-hiding a door the party never found). Omit to leave the type alone.' },
+            playSound: { type: 'boolean', description: 'Play the normal door sound (best effort; suppression depends on Foundry version)', default: true },
+            sceneId: { type: 'string', description: 'Scene id; defaults to the active scene' },
+          },
+          required: ['state'],
+        },
+      },
+      {
+        name: 'set-doors-batch',
+        description:
+          'Apply several door changes at once, e.g. shutting a corridor of doors. Takes an array of { wallId, state, reveal? }; each door gets its own verified read-back and a failure on one does not stop the rest. Requires the module "Allow Door Changes" setting.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            doors: {
+              type: 'array',
+              description: 'Door changes to apply',
+              items: {
+                type: 'object',
+                properties: {
+                  wallId: { type: 'string' },
+                  state: { type: 'string', enum: ['open', 'closed', 'locked'] },
+                  reveal: { type: 'boolean' },
+                  doorType: { type: 'string', enum: ['door', 'secret'] },
+                },
+                required: ['wallId', 'state'],
+              },
+            },
+            playSound: { type: 'boolean', default: true },
+            sceneId: { type: 'string' },
+          },
+          required: ['doors'],
+        },
+      },
+      {
         name: 'get-world-info',
         description: 'Get basic information about the Foundry world and system',
         inputSchema: {
@@ -509,6 +560,54 @@ export class SceneTools {
       this.logger.error('Failed to test token in region', error);
       throw new Error(
         `Failed to test token in region: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleSetDoorState(args: any): Promise<any> {
+    const schema = z.object({
+      wallId: z.string().optional(),
+      nearest: z.object({ x: z.number(), y: z.number() }).optional(),
+      tokenId: z.string().optional(),
+      state: z.enum(['open', 'closed', 'locked']),
+      reveal: z.boolean().default(false),
+      doorType: z.enum(['door', 'secret']).optional(),
+      playSound: z.boolean().default(true),
+      sceneId: z.string().optional(),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Setting door state', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.setDoorState', params);
+    } catch (error) {
+      this.logger.error('Failed to set door state', error);
+      throw new Error(
+        `Failed to set door state: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleSetDoorsBatch(args: any): Promise<any> {
+    const schema = z.object({
+      doors: z.array(
+        z.object({
+          wallId: z.string(),
+          state: z.enum(['open', 'closed', 'locked']),
+          reveal: z.boolean().optional(),
+          doorType: z.enum(['door', 'secret']).optional(),
+        })
+      ),
+      playSound: z.boolean().default(true),
+      sceneId: z.string().optional(),
+    });
+    const params = schema.parse(args);
+    this.logger.info('Setting doors batch', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.setDoorsBatch', params);
+    } catch (error) {
+      this.logger.error('Failed to set doors', error);
+      throw new Error(
+        `Failed to set doors: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

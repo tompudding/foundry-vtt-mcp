@@ -36,6 +36,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.getTokenDistances`] = this.handleGetTokenDistances.bind(this);
     CONFIG.queries[`${modulePrefix}.applyTokenDamage`] = this.handleApplyTokenDamage.bind(this);
     CONFIG.queries[`${modulePrefix}.getSceneWalls`] = this.handleGetSceneWalls.bind(this);
+    CONFIG.queries[`${modulePrefix}.setDoorState`] = this.handleSetDoorState.bind(this);
+    CONFIG.queries[`${modulePrefix}.setDoorsBatch`] = this.handleSetDoorsBatch.bind(this);
     CONFIG.queries[`${modulePrefix}.getWorldTime`] = this.handleGetWorldTime.bind(this);
     CONFIG.queries[`${modulePrefix}.getSceneRegions`] = this.handleGetSceneRegions.bind(this);
     CONFIG.queries[`${modulePrefix}.testTokenInRegion`] = this.handleTestTokenInRegion.bind(this);
@@ -509,6 +511,47 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to test token in region: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async doorWriteAllowed(): Promise<string | null> {
+    try {
+      const ok = !!(game as any).settings.get('foundry-mcp-bridge', 'allowDoorChanges');
+      return ok
+        ? null
+        : 'Door changes are disabled. Enable "Allow Door Changes" in the Foundry MCP Bridge module settings.';
+    } catch (_e) {
+      return 'Door changes are disabled (setting unavailable).';
+    }
+  }
+
+  private async handleSetDoorState(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      const denied = await this.doorWriteAllowed();
+      if (denied) return { error: denied, success: false };
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.setDoorState(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to set door state: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleSetDoorsBatch(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      const denied = await this.doorWriteAllowed();
+      if (denied) return { error: denied, success: false };
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.setDoorsBatch(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to set doors: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

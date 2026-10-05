@@ -1602,6 +1602,16 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'set-door-state':
+                  result = await sceneTools.handleSetDoorState(args);
+
+                  break;
+
+                case 'set-doors-batch':
+                  result = await sceneTools.handleSetDoorsBatch(args);
+
+                  break;
+
                 case 'get-world-time':
                   result = await sceneTools.handleGetWorldTime(args);
 

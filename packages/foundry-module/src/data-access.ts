@@ -4897,7 +4897,10 @@ export class FoundryDataAccess {
       const c = w.c ?? w._source?.c ?? [];
       const isDoor = (w.door ?? 0) > 0;
       const doorOpen = isDoor && (w.ds ?? 0) === 1;
-      const blocksMove = (w.move ?? 1) !== 0;
+      // An OPEN door blocks neither sight NOR movement. Applying the open check
+      // to sight alone made open doors report blocksMove: true alongside
+      // passableNow: true, contradicting both themselves and set-door-state.
+      const blocksMove = !doorOpen && (w.move ?? 1) !== 0;
       // An OPEN door blocks neither sight nor movement regardless of its flags.
       const blocksSight = !doorOpen && (w.sight ?? 1) !== 0;
       // "Invisible" walls block movement but not sight (sight sense = none).
@@ -5709,6 +5712,256 @@ export class FoundryDataAccess {
       .trim();
     if (!text) return null;
     return text.length > cap ? text.slice(0, cap) + '\u2026' : text;
+  }
+
+
+  /** Door constants, read from CONST at runtime (their numbers have moved between
+   * Foundry versions) with the documented values as a fallback. */
+  private doorConstants(): { types: any; states: any } {
+    const C: any = CONST as any;
+    return {
+      types: C?.WALL_DOOR_TYPES ?? { NONE: 0, DOOR: 1, SECRET: 2 },
+      states: C?.WALL_DOOR_STATES ?? { CLOSED: 0, OPEN: 1, LOCKED: 2 },
+    };
+  }
+
+  private describeDoor(wall: any, gridSize: number): any {
+    const { types, states } = this.doorConstants();
+    const c = wall.c ?? wall._source?.c ?? [];
+    const nameOf = (table: any, value: number): string =>
+      (Object.entries(table).find(([, v]) => v === value)?.[0] ?? String(value)).toLowerCase();
+    const isOpen = (wall.ds ?? 0) === states.OPEN;
+    return {
+      wallId: wall.id,
+      doorType: nameOf(types, wall.door ?? 0),
+      state: nameOf(states, wall.ds ?? 0),
+      from: {
+        x: c[0],
+        y: c[1],
+        gx: +(c[0] / gridSize).toFixed(2),
+        gy: +(c[1] / gridSize).toFixed(2),
+      },
+      to: {
+        x: c[2],
+        y: c[3],
+        gx: +(c[2] / gridSize).toFixed(2),
+        gy: +(c[3] / gridSize).toFixed(2),
+      },
+      blocksMovement: !isOpen && (wall.move ?? 1) !== 0,
+      blocksSight: !isOpen && (wall.sight ?? 1) !== 0,
+      passableNow: isOpen,
+    };
+  }
+
+  /** Shortest distance from a point to a wall segment, for `nearest` lookups. */
+  private pointToSegment(px: number, py: number, c: number[]): number {
+    const [x1, y1, x2, y2] = c;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+    let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  }
+
+  private resolveDoorScene(sceneId?: string): any {
+    const scene: any = sceneId
+      ? (game as any).scenes?.get(sceneId)
+      : (game as any).scenes?.current;
+    if (!scene) throw new Error(sceneId ? `Scene not found: ${sceneId}` : 'No active scene');
+    return scene;
+  }
+
+  /**
+   * Open, close or lock a door. Updates the WallDocument so the client's normal
+   * door behaviour (sound, animation, vision refresh) fires as usual.
+   *
+   * Two documented rulings:
+   *  - state "locked" on an OPEN door shuts it and locks it, because a door
+   *    cannot be both open and locked; the read-back reports the shut.
+   *  - a LOCKED door is never opened implicitly: state must be "open"
+   *    explicitly, and wasLocked is reported so the unlock is visible.
+   */
+  async setDoorState(data: {
+    wallId?: string;
+    nearest?: { x: number; y: number };
+    tokenId?: string;
+    state: 'open' | 'closed' | 'locked';
+    reveal?: boolean;
+    doorType?: 'door' | 'secret';
+    playSound?: boolean;
+    sceneId?: string;
+  }): Promise<any> {
+    const scene = this.resolveDoorScene(data.sceneId);
+    const gridSize = scene.grid?.size || 100;
+    const { types, states } = this.doorConstants();
+    const walls: any[] = Array.from(scene.walls ?? []);
+    const doors = walls.filter(w => (w.door ?? 0) > 0);
+
+    let wall: any | undefined;
+    let chosenBy = 'wallId';
+    let distancePx: number | null = null;
+
+    if (data.wallId) {
+      wall = walls.find(w => w.id === data.wallId);
+      if (!wall) throw new Error(`No wall with id ${data.wallId} on scene "${scene.name}"`);
+      if ((wall.door ?? 0) === 0) {
+        throw new Error(
+          `Wall ${data.wallId} is not a door (it is a plain wall). Use get-scene-walls with doorsOnly: true to list doors.`
+        );
+      }
+    } else {
+      let point: { x: number; y: number } | null = null;
+      if (data.nearest) {
+        point = data.nearest;
+        chosenBy = 'nearest';
+      } else if (data.tokenId) {
+        const tokenDoc: any = scene.tokens?.get(data.tokenId);
+        if (!tokenDoc) throw new Error(`Token not found on scene: ${data.tokenId}`);
+        point = {
+          x: tokenDoc.x + ((tokenDoc.width ?? 1) * gridSize) / 2,
+          y: tokenDoc.y + ((tokenDoc.height ?? 1) * gridSize) / 2,
+        };
+        chosenBy = 'nearest to token';
+      }
+      if (!point) {
+        throw new Error('Provide wallId, nearest: {x, y}, or tokenId to identify the door');
+      }
+      if (doors.length === 0) throw new Error(`No doors on scene "${scene.name}"`);
+      let best = Infinity;
+      for (const d of doors) {
+        const c = d.c ?? d._source?.c ?? [];
+        if (c.length < 4) continue;
+        const dist = this.pointToSegment(point.x, point.y, c);
+        if (dist < best) {
+          best = dist;
+          wall = d;
+        }
+      }
+      distancePx = best === Infinity ? null : Math.round(best);
+    }
+    if (!wall) throw new Error('Could not identify a door');
+
+    const before = this.describeDoor(wall, gridSize);
+    const wasLocked = (wall.ds ?? 0) === states.LOCKED;
+
+    const target = String(data.state).toLowerCase();
+    let newDs: number;
+    if (target === 'open') {
+      newDs = states.OPEN;
+    } else if (target === 'closed') {
+      newDs = states.CLOSED;
+    } else if (target === 'locked') {
+      newDs = states.LOCKED;
+    } else {
+      throw new Error(`Invalid state "${data.state}"; expected open, closed or locked`);
+    }
+
+    // A locked door is never opened as a side effect: "open" is explicit here,
+    // which is exactly the explicit request the rule asks for.
+    const update: any = { ds: newDs };
+    let revealed = false;
+    let concealed = false;
+    // doorType sets the type in either direction; reveal is sugar for
+    // doorType: 'door'. Without a way back, a revealed secret door could never
+    // be re-hidden, so an accidental reveal was an unrecoverable spoiler.
+    const wantType =
+      data.doorType === 'door'
+        ? types.DOOR
+        : data.doorType === 'secret'
+          ? types.SECRET
+          : data.reveal
+            ? types.DOOR
+            : null;
+    if (wantType !== null && (wall.door ?? 0) !== wantType) {
+      update.door = wantType;
+      revealed = wantType === types.DOOR;
+      concealed = wantType === types.SECRET;
+    }
+
+    await wall.update(update, { sound: data.playSound !== false });
+
+    const fresh: any = scene.walls?.get(wall.id) ?? wall;
+    const after = this.describeDoor(fresh, gridSize);
+
+    const notes: string[] = [];
+    if (wasLocked && target === 'open') {
+      notes.push('The door was LOCKED and has been opened by explicit request.');
+    }
+    if (target === 'locked' && before.state === 'open') {
+      notes.push('A door cannot be open and locked: it has been shut and locked.');
+    }
+    if ((data.reveal || data.doorType === 'door') && !revealed && before.doorType === 'door') {
+      notes.push('This door is already a normal door; type unchanged.');
+    }
+    if (data.doorType === 'secret' && !concealed && before.doorType === 'secret') {
+      notes.push('This door is already secret; type unchanged.');
+    }
+    if (revealed) {
+      notes.push('Secret door revealed: it is now a normal door and visible to players.');
+    }
+    if (concealed) {
+      notes.push('Door hidden: it is now a SECRET door and no longer visible to players.');
+    }
+
+    return {
+      wallId: fresh.id,
+      scene: scene.name,
+      chosenBy,
+      distancePx,
+      distanceSquares: distancePx === null ? null : +(distancePx / gridSize).toFixed(2),
+      doorType: after.doorType,
+      previousState: before.state,
+      newState: after.state,
+      wasLocked,
+      revealed,
+      concealed,
+      changed: before.state !== after.state || revealed || concealed,
+      from: after.from,
+      to: after.to,
+      blocksMovement: after.blocksMovement,
+      blocksSight: after.blocksSight,
+      passableNow: after.passableNow,
+      notes: notes.length ? notes : null,
+    };
+  }
+
+  /** Apply several door changes in one go; each gets its own read-back. */
+  async setDoorsBatch(data: {
+    doors: Array<{
+      wallId: string;
+      state: 'open' | 'closed' | 'locked';
+      reveal?: boolean;
+      doorType?: 'door' | 'secret';
+    }>;
+    playSound?: boolean;
+    sceneId?: string;
+  }): Promise<any> {
+    if (!Array.isArray(data.doors) || data.doors.length === 0) {
+      throw new Error('doors must be a non-empty array of { wallId, state, reveal? }');
+    }
+    const results: any[] = [];
+    for (const entry of data.doors) {
+      try {
+        const payload: any = {
+          wallId: entry.wallId,
+          state: entry.state,
+          playSound: data.playSound,
+        };
+        if (entry.reveal !== undefined) payload.reveal = entry.reveal;
+        if (entry.doorType !== undefined) payload.doorType = entry.doorType;
+        if (data.sceneId !== undefined) payload.sceneId = data.sceneId;
+        results.push(await this.setDoorState(payload));
+      } catch (error) {
+        results.push({
+          wallId: entry.wallId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          changed: false,
+        });
+      }
+    }
+    return { count: results.length, changed: results.filter(r => r.changed).length, results };
   }
 
   async getWorldInfo(): Promise<WorldInfo> {
