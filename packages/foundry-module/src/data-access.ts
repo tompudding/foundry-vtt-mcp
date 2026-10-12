@@ -4436,8 +4436,71 @@ export class FoundryDataAccess {
     if (!origin) throw new Error('Origin token not found on the viewed scene');
     const originObj: any = origin.object;
 
+    // ---- Malformed-token guard -------------------------------------------
+    // PF2e's distanceTo resolves a token's grid footprint by rounding outward.
+    // For a token that is off-grid or has a fractional size, that inflates its
+    // effective area and under-reports every distance from it (a 1.5x2 haunt at
+    // a non-multiple-of-grid position read 10 ft to a token that is 15 ft away,
+    // and its own numbers failed the triangle inequality). Such tokens get a
+    // geometric measurement instead; well-formed tokens keep distanceTo exactly
+    // as before, so nothing that already matches the in-app ruler changes.
+    const gridSizePx = cv.scene.grid.size || 100;
+    const gridDistance = cv.scene.grid.distance || 5;
+    const nearlyWhole = (n: number) => Math.abs(n - Math.round(n)) < 1e-6;
+    const tokenQuirks = (t: any): string[] => {
+      const quirks: string[] = [];
+      if (!nearlyWhole((t.x ?? 0) / gridSizePx) || !nearlyWhole((t.y ?? 0) / gridSizePx)) {
+        quirks.push('off-grid position');
+      }
+      if (!nearlyWhole(t.width ?? 1) || !nearlyWhole(t.height ?? 1)) {
+        quirks.push('fractional size');
+      }
+      return quirks;
+    };
+    // Squares a token occupies, counting a square only when it is at least
+    // half covered. Counting ANY overlap would let a 3-pixel sliver claim a
+    // whole extra row - the same footprint inflation that makes distanceTo
+    // under-report in the first place - so a 2-square-tall token stays two
+    // squares tall, matching what the GM sees on the canvas.
+    const spanOf = (start: number, sizeSquares: number): [number, number] => {
+      const end = start + sizeSquares * gridSizePx;
+      const first = Math.floor(start / gridSizePx);
+      const last = Math.floor((end - 1e-9) / gridSizePx);
+      const kept: number[] = [];
+      for (let i = first; i <= last; i++) {
+        const lo = Math.max(start, i * gridSizePx);
+        const hi = Math.min(end, (i + 1) * gridSizePx);
+        if ((hi - lo) / gridSizePx >= 0.5) kept.push(i);
+      }
+      return kept.length ? [kept[0], kept[kept.length - 1]] : [first, last];
+    };
+    const occupied = (t: any) => {
+      const [c0, c1] = spanOf(t.x ?? 0, t.width ?? 1);
+      const [r0, r1] = spanOf(t.y ?? 0, t.height ?? 1);
+      return { c0, c1, r0, r1 };
+    };
+    // Closest occupied squares with PF2e's alternating 5-10-5 diagonal, applied
+    // in TWO stages: ground distance first, then combined with the elevation
+    // difference the same way. Sorting all three axes together over-counts -
+    // it made a token one square away and one 5-ft step up read as 10 ft where
+    // PF2e (and the ruler) say 5.
+    const alternating = (a: number, b: number): number => {
+      const hi = Math.max(a, b);
+      const lo = Math.min(a, b);
+      return hi + Math.floor(lo / 2);
+    };
+    const geometricDistance = (a: any, b: any): number => {
+      const A = occupied(a);
+      const B = occupied(b);
+      const dx = Math.max(0, Math.max(A.c0 - B.c1, B.c0 - A.c1));
+      const dy = Math.max(0, Math.max(A.r0 - B.r1, B.r0 - A.r1));
+      const ground = alternating(dx, dy);
+      const dz = Math.floor(Math.abs((a.elevation ?? 0) - (b.elevation ?? 0)) / gridDistance);
+      return alternating(ground, dz) * gridDistance;
+    };
+
     const manualMeasure = (a: any, b: any): number => {
-      const gs = cv.scene.grid.size || 1;
+      const gs = gridSizePx;
       const gd = cv.scene.grid.distance || 5;
       const dx = Math.abs((a.x ?? 0) - (b.x ?? 0)) / gs;
       const dy = Math.abs((a.y ?? 0) - (b.y ?? 0)) / gs;
@@ -4446,8 +4509,38 @@ export class FoundryDataAccess {
       return Math.round((hi + Math.floor(lo / 2)) * gd);
     };
 
-    const measure = (targetDoc: any): { distance: number | null; method: string } => {
+    const measure = (
+      targetDoc: any
+    ): {
+      distance: number | null;
+      method: string;
+      systemDistance?: number | null;
+      quirks?: string[];
+    } => {
       const targetObj: any = targetDoc.object;
+      // 0. Malformed tokens: measure geometrically, because distanceTo is
+      //    demonstrably wrong for them (see the note above).
+      const quirks = [
+        ...tokenQuirks(origin).map(q => `origin ${q}`),
+        ...tokenQuirks(targetDoc).map(q => `target ${q}`),
+      ];
+      if (quirks.length > 0) {
+        let systemValue: number | null = null;
+        if (originObj && targetObj && typeof originObj.distanceTo === 'function') {
+          try {
+            systemValue = originObj.distanceTo(targetObj, {});
+          } catch (_e) {
+            systemValue = null;
+          }
+        }
+        const geometric = geometricDistance(origin, targetDoc);
+        return {
+          distance: geometric,
+          method: 'geometric (token not grid-aligned)',
+          systemDistance: systemValue,
+          quirks,
+        };
+      }
       // 1. System metric (PF2e distanceTo) — matches the in-app ruler exactly
       if (originObj && targetObj && typeof originObj.distanceTo === 'function') {
         try {
@@ -4486,6 +4579,14 @@ export class FoundryDataAccess {
           distance: m.distance,
           method: m.method,
         };
+        if (m.systemDistance !== undefined) {
+          // Reported alongside so a disagreement is visible rather than silent
+          entry.systemDistance = m.systemDistance;
+          entry.measurementNote =
+            m.systemDistance !== null && m.systemDistance !== m.distance
+              ? `PF2e reported ${m.systemDistance} ft; geometry gives ${m.distance} ft (${(m.quirks ?? []).join(', ')}).`
+              : `Measured geometrically (${(m.quirks ?? []).join(', ')}).`;
+        }
         if (data.rangeFeet != null && m.distance != null) {
           entry.inRange = m.distance <= data.rangeFeet;
         }
