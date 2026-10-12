@@ -111,7 +111,7 @@ export class SceneTools {
       {
         name: 'apply-damage',
         description:
-          'Apply damage or healing to a token via the PF2e damage pipeline. IMPORTANT: pass damageType (and materials where relevant) - the system can only apply weaknesses, resistances and immunities to TYPED damage; untyped damage bypasses IWR entirely, which also makes skipIWR meaningless. Identify the target by tokenId, tokenName, selected: true, or targeted: true. amount is a positive number; set healing: true to heal instead. skipIWR applies the typed number as-is; raw forces plain HP subtraction. Requires the module Allow Combat Writes setting.',
+          'Apply damage or healing to a token via the PF2e damage pipeline. IMPORTANT: pass damageType (and materials where relevant) - the system can only apply weaknesses, resistances and immunities to TYPED damage; untyped damage bypasses IWR entirely, which also makes skipIWR meaningless. Identify the target by tokenId, tokenName, selected: true, or targeted: true. amount is a positive number; set healing: true to heal instead. skipIWR applies the typed number as-is; raw applies exactly the amount (no IWR, hardness or shield; temp HP still absorbs). Every application posts a damage chat card; reason adds a note to it. An NPC reduced to 0 HP is marked dead (per the PF2e dead-at-zero setting), in or out of an encounter; PCs are reported atZeroHp but left for dying rules. Requires the module Allow Combat Writes setting.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -122,12 +122,37 @@ export class SceneTools {
             amount: { type: 'number', description: 'Amount of damage (or healing if healing: true); positive number' },
             healing: { type: 'boolean', description: 'Heal instead of damage', default: false },
             skipIWR: { type: 'boolean', description: 'Apply the number as-is, ignoring resistances/weaknesses', default: false },
-            raw: { type: 'boolean', description: 'Plain HP arithmetic, bypassing the system pipeline entirely', default: false },
+            raw: { type: 'boolean', description: 'Apply exactly this amount: no weaknesses, resistances, immunities, hardness or shield block. Still recorded in chat.', default: false },
+            reason: { type: 'string', description: 'Short note shown on the chat card, e.g. persistent fire or falling damage' },
             damageType: { type: 'string', description: 'Damage type: slashing, piercing, bludgeoning, fire, cold, electricity, acid, sonic, vitality, void, force, mental, poison, bleed, spirit. REQUIRED for weaknesses/resistances/immunities to apply - untyped damage bypasses IWR entirely.' },
             materials: { type: 'array', items: { type: 'string' }, description: 'Material effects on the damage, e.g. cold-iron, silver, adamantine. Needed for creatures with material-specific weaknesses.' },
             instances: { type: 'array', description: 'For mixed damage, one entry per instance, e.g. [{amount:7,damageType:"slashing",materials:["cold-iron"]},{amount:3,damageType:"fire"}]. Overrides amount/damageType.', items: { type: 'object', properties: { amount: { type: 'number' }, damageType: { type: 'string' }, materials: { type: 'array', items: { type: 'string' } } } } },
           },
           required: ['amount'],
+        },
+      },
+      {
+        name: 'get-combat-tracker',
+        description:
+          "Read Foundry's combat tracker for the current scene: round, whose turn it is (current), who is next (nextUp, skipping defeated), and every combatant in initiative order with initiative, defeated/hidden flags, HP and tokenId. unrolledInitiative lists anyone still needing a roll. Returns active: false if no encounter exists.",
+        inputSchema: {
+          type: 'object',
+          properties: {
+            combatId: { type: 'string', description: 'A specific combat id; defaults to the combat on the viewed scene' },
+          },
+        },
+      },
+      {
+        name: 'advance-combat',
+        description:
+          'Move the combat tracker turn marker. action: next-turn (default; rolls into the next round after the last combatant), previous-turn, next-round, previous-round, or start (begin the encounter once initiative is rolled). Pass expectedCurrent (the combatantId or name whose turn you believe is ending) so a retried call cannot advance twice - the change is refused if the turn has already moved. Returns the updated tracker. Requires the module Allow Combat Writes setting.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['next-turn', 'previous-turn', 'next-round', 'previous-round', 'start'], default: 'next-turn' },
+            expectedCurrent: { type: 'string', description: 'combatantId or name of the combatant whose turn is ending; refuses if it is not their turn' },
+            combatId: { type: 'string', description: 'A specific combat id; defaults to the combat on the viewed scene' },
+          },
         },
       },
       {
@@ -408,6 +433,7 @@ export class SceneTools {
       healing: z.boolean().default(false),
       skipIWR: z.boolean().default(false),
       raw: z.boolean().default(false),
+      reason: z.string().optional(),
       damageType: z.string().optional(),
       materials: z.array(z.string()).optional(),
       instances: z
@@ -428,6 +454,37 @@ export class SceneTools {
       this.logger.error('Failed to apply damage', error);
       throw new Error(
         `Failed to apply damage: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleGetCombatTracker(args: any): Promise<any> {
+    const params = z.object({ combatId: z.string().optional() }).parse(args ?? {});
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getCombatTracker', params);
+    } catch (error) {
+      this.logger.error('Failed to get combat tracker', error);
+      throw new Error(
+        `Failed to get combat tracker: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleAdvanceCombat(args: any): Promise<any> {
+    const params = z
+      .object({
+        action: z.enum(['next-turn', 'previous-turn', 'next-round', 'previous-round', 'start']).default('next-turn'),
+        expectedCurrent: z.string().optional(),
+        combatId: z.string().optional(),
+      })
+      .parse(args ?? {});
+    this.logger.info('Advancing combat', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.advanceCombat', params);
+    } catch (error) {
+      this.logger.error('Failed to advance combat', error);
+      throw new Error(
+        `Failed to advance combat: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

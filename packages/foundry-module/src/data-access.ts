@@ -4797,6 +4797,7 @@ export class FoundryDataAccess {
     damageType?: string;
     materials?: string[];
     instances?: Array<{ amount: number; damageType?: string; materials?: string[] }>;
+    reason?: string;
   }): Promise<any> {
     // Resolve the target token document(s) by reusing getTokenState's matcher
     const lookup: { selected?: boolean; targeted?: boolean; tokenId?: string; tokenName?: string } = {};
@@ -4908,7 +4909,34 @@ export class FoundryDataAccess {
       const hpBefore = actor.system?.attributes?.hp?.value ?? null;
       let method = 'raw';
       try {
-        if (!data.raw && typeof actor.applyDamage === 'function') {
+        // Healing a defeated combatant: PF2e clears the dead status twice (in
+        // applyDamage and again in the actor's un-awaited _onUpdate), and the
+        // second removal throws "ActiveEffect ... does not exist", aborting
+        // before the chat card. Clearing defeated first leaves neither path
+        // anything to toggle.
+        const preCombatant: any = tokenDoc.combatant ?? null;
+        if (
+          value < 0 &&
+          typeof actor.applyDamage === 'function' &&
+          preCombatant?.isDefeated &&
+          typeof preCombatant.toggleDefeated === 'function'
+        ) {
+          await preCombatant.toggleDefeated({ to: false });
+        }
+        if (data.raw && typeof actor.applyDamage === 'function') {
+          // Raw on a system with a damage pipeline: `final: true` is PF2e's own
+          // "apply exactly this" mode (no IWR, hardness or shield block; temp
+          // HP still absorbs). Going through applyDamage rather than a bare
+          // actor.update means the system posts its damage-taken chat card
+          // (with Undo) and runs its dead-at-zero automation.
+          await actor.applyDamage({
+            damage: value,
+            token: tokenDoc,
+            final: true,
+            breakdown: data.reason ? [String(data.reason)] : [],
+          });
+          method = value < 0 ? 'raw healing (system final)' : 'raw (system final: no IWR/hardness)';
+        } else if (!data.raw && typeof actor.applyDamage === 'function') {
           // PF2e signed-value path: runs IWR unless skipIWR/healing-final
           // Pass a DamageRoll when we have one: only then does applyDamage run
           // applyIWR. A bare number short-circuits IWR entirely.
@@ -4916,7 +4944,7 @@ export class FoundryDataAccess {
             damage: damageRoll ?? value,
             token: tokenDoc,
             skipIWR: data.skipIWR ?? false,
-            final: data.raw ?? false,
+            breakdown: data.reason ? [String(data.reason)] : [],
           });
           method = damageRoll
             ? data.skipIWR
@@ -4941,10 +4969,32 @@ export class FoundryDataAccess {
             'system.attributes.hp.value': newValue,
             'system.attributes.hp.temp': newTemp,
           });
+          // No system pipeline here, so nothing else records the change
+          const delta = (hp.value ?? 0) - newValue;
+          if (delta !== 0) {
+            await ChatMessage.create({
+              content: `<p><strong>${tokenDoc.name}</strong> ${
+                delta > 0 ? `takes ${delta} damage` : `is healed for ${-delta}`
+              } (${hp.value} → ${newValue} HP)${data.reason ? ` - ${data.reason}` : ''}.</p>`,
+              speaker: { alias: 'Damage' },
+              whisper: actor.hasPlayerOwner ? [] : ChatMessage.getWhisperRecipients('GM'),
+            } as any);
+          }
         }
       } catch (e) {
         results.push({ tokenId: id, name: tokenDoc.name, error: `${e}` });
         continue;
+      }
+      let deathResult: { dead: boolean; deadMarkedBy: string | null; note?: string } = {
+        dead: false,
+        deadMarkedBy: null,
+      };
+      if (value > 0) {
+        try {
+          deathResult = await this.markDeadAtZero(scene.tokens?.get(id));
+        } catch (e) {
+          deathResult = { dead: false, deadMarkedBy: null, note: `Could not mark dead: ${e}` };
+        }
       }
       const fresh: any = scene.tokens?.get(id)?.actor;
       const hpAfter = fresh?.system?.attributes?.hp?.value ?? null;
@@ -4966,12 +5016,234 @@ export class FoundryDataAccess {
           hpBefore - hpAfter !== totalRequested,
         hpMax: fresh?.system?.attributes?.hp?.max ?? null,
         tempHp: fresh?.system?.attributes?.hp?.temp ?? 0,
-        defeated: hpAfter != null && hpAfter <= 0,
+        atZeroHp: hpAfter != null && hpAfter <= 0,
+        // True only when the token actually carries the dead status
+        dead: deathResult.dead,
+        deadMarkedBy: deathResult.deadMarkedBy,
+        ...(deathResult.note ? { deathNote: deathResult.note } : {}),
       });
     }
     return results.length === 1 ? results[0] : { results };
   }
 
+  /**
+   * Mirror PF2e's dead-at-zero automation after damage. The system only does
+   * this through token.combatant.toggleDefeated(), so a token that is not in
+   * an encounter (or damage applied by the non-system fallback) never gets
+   * marked. Honours the "automation.actorsDeadAtZero" world setting: NPCs are
+   * marked when it is npcsOnly/both. PCs are never marked here - at 0 HP they
+   * are dying, not dead (the system handles instant-death cases itself).
+   */
+  private async markDeadAtZero(
+    tokenDoc: any
+  ): Promise<{ dead: boolean; deadMarkedBy: string | null; note?: string }> {
+    const actor: any = tokenDoc?.actor;
+    if (!actor) return { dead: false, deadMarkedBy: null };
+    const hasDead = (): boolean => !!actor.statuses?.has?.('dead');
+    const hp = actor.system?.attributes?.hp;
+    const combatant: any = tokenDoc.combatant ?? null;
+    if (!hp || (hp.max ?? 0) <= 0 || hp.value !== 0) {
+      return { dead: hasDead(), deadMarkedBy: null };
+    }
+    if (hasDead()) {
+      // Already marked - by the system's own combatant path, or earlier
+      return { dead: true, deadMarkedBy: combatant ? 'system (encounter)' : 'already dead' };
+    }
+    if ((game as any).system?.id !== 'pf2e') {
+      await actor.toggleStatusEffect?.('dead', { active: true, overlay: true });
+      return { dead: hasDead(), deadMarkedBy: 'bridge' };
+    }
+    let setting = 'both';
+    try {
+      setting = String((game as any).settings.get('pf2e', 'automation.actorsDeadAtZero'));
+    } catch (_e) {
+      /* default */
+    }
+    const isNpc = actor.type === 'npc';
+    if (!isNpc) {
+      return {
+        dead: false,
+        deadMarkedBy: null,
+        note:
+          actor.type === 'character'
+            ? 'PC at 0 HP: not marked dead. Apply dying (and wounded) per the rules.'
+            : `${actor.type} at 0 HP: not marked dead automatically.`,
+      };
+    }
+    if (!['npcsOnly', 'both'].includes(setting)) {
+      return {
+        dead: false,
+        deadMarkedBy: null,
+        note: `PF2e "actors dead at zero" setting is "${setting}", so the NPC was not marked dead.`,
+      };
+    }
+    if (combatant && !combatant.isDefeated && typeof combatant.toggleDefeated === 'function') {
+      await combatant.toggleDefeated({ to: true });
+    } else {
+      await actor.toggleStatusEffect('dead', { active: true, overlay: true });
+    }
+    return { dead: hasDead(), deadMarkedBy: 'bridge' };
+  }
+
+  // ---- Combat tracker ---------------------------------------------------
+
+  private resolveCombat(combatId?: string): any {
+    const g: any = game as any;
+    if (combatId) {
+      const c = g.combats?.get(combatId);
+      if (!c) throw new Error(`No combat with id ${combatId}`);
+      return c;
+    }
+    return g.combat ?? g.combats?.active ?? null;
+  }
+
+  private describeCombatant(c: any, index: number, current: any): any {
+    const actor: any = c.actor;
+    const hp = actor?.system?.attributes?.hp;
+    return {
+      order: index + 1,
+      combatantId: c.id,
+      name: c.name,
+      tokenId: c.tokenId ?? null,
+      actorId: c.actorId ?? null,
+      initiative: typeof c.initiative === 'number' ? c.initiative : null,
+      initiativeStatistic: c.flags?.pf2e?.initiativeStatistic ?? null,
+      isCurrent: !!current && current.id === c.id,
+      defeated: !!(c.isDefeated ?? c.defeated),
+      hidden: !!c.hidden,
+      playerOwned: !!actor?.hasPlayerOwner,
+      alliance: actor?.alliance ?? null,
+      hp: hp ? { value: hp.value ?? null, max: hp.max ?? null } : null,
+    };
+  }
+
+  /**
+   * The encounter's initiative order as Foundry's combat tracker shows it:
+   * round, whose turn it is, and every combatant in turn order.
+   */
+  async getCombatTracker(data: { combatId?: string } = {}): Promise<any> {
+    const g: any = game as any;
+    const combat = this.resolveCombat(data.combatId);
+    const others = (g.combats?.contents ?? [])
+      .filter((c: any) => !combat || c.id !== combat.id)
+      .map((c: any) => ({
+        combatId: c.id,
+        sceneId: c.scene?.id ?? null,
+        round: c.round,
+        started: !!c.started,
+      }));
+    if (!combat) {
+      return {
+        active: false,
+        message:
+          'No combat encounter on the current scene. Create one in the combat tracker (or start combat from the token HUD) first.',
+        otherCombats: others,
+      };
+    }
+    const turns: any[] = combat.turns ?? [];
+    const current: any = combat.combatant ?? null;
+    const combatants = turns.map((c: any, i: number) => this.describeCombatant(c, i, current));
+    const unrolled = combatants.filter((c: any) => c.initiative === null).map((c: any) => c.name);
+    let nextUp: any = null;
+    if (combat.started && turns.length) {
+      // Next living combatant after the current one (wraps into next round)
+      const start = combat.turn ?? -1;
+      for (let step = 1; step <= turns.length; step++) {
+        const c = turns[(start + step) % turns.length];
+        if (!(c.isDefeated ?? c.defeated)) {
+          nextUp = {
+            combatantId: c.id,
+            name: c.name,
+            tokenId: c.tokenId ?? null,
+            newRound: start + step >= turns.length,
+          };
+          break;
+        }
+      }
+    }
+    return {
+      active: true,
+      combatId: combat.id,
+      sceneId: combat.scene?.id ?? null,
+      started: !!combat.started,
+      round: combat.round ?? 0,
+      turn: combat.turn ?? null,
+      current: current ? this.describeCombatant(current, turns.indexOf(current), current) : null,
+      nextUp,
+      combatants,
+      unrolledInitiative: unrolled,
+      ...(others.length ? { otherCombats: others } : {}),
+    };
+  }
+
+  /**
+   * Move the combat tracker's turn marker. Actions: next-turn (default),
+   * previous-turn, next-round, previous-round, start. If expectedCurrent is
+   * given (a combatantId or name), the change is refused unless that combatant
+   * currently holds the turn - so a retried call cannot advance twice.
+   */
+  async advanceCombat(
+    data: { action?: string; combatId?: string; expectedCurrent?: string } = {}
+  ): Promise<any> {
+    const combat = this.resolveCombat(data.combatId);
+    if (!combat) throw new Error('No combat encounter on the current scene');
+    const action = (data.action ?? 'next-turn').toLowerCase();
+    const before = combat.combatant ?? null;
+
+    if (data.expectedCurrent && action !== 'start') {
+      const want = String(data.expectedCurrent).trim().toLowerCase();
+      const matches =
+        !!before &&
+        (before.id === data.expectedCurrent || String(before.name ?? '').toLowerCase() === want);
+      if (!matches) {
+        return {
+          changed: false,
+          reason: `Refused: expected it to be ${data.expectedCurrent}'s turn, but it is ${before ? before.name : 'nobody'}'s. The turn may already have been advanced.`,
+          ...(await this.getCombatTracker({ combatId: combat.id })),
+        };
+      }
+    }
+
+    const roundBefore = combat.round ?? 0;
+    switch (action) {
+      case 'start':
+        if (combat.started) {
+          return {
+            changed: false,
+            reason: 'Combat already started',
+            ...(await this.getCombatTracker({ combatId: combat.id })),
+          };
+        }
+        await combat.startCombat();
+        break;
+      case 'next-turn':
+      case 'previous-turn':
+      case 'next-round':
+      case 'previous-round':
+        if (!combat.started) {
+          throw new Error(
+            'Combat has not started yet. Use action "start" first (after initiative is rolled).'
+          );
+        }
+        if (action === 'next-turn') await combat.nextTurn();
+        else if (action === 'previous-turn') await combat.previousTurn();
+        else if (action === 'next-round') await combat.nextRound();
+        else await combat.previousRound();
+        break;
+      default:
+        throw new Error(
+          `Unknown action "${data.action}". Use next-turn, previous-turn, next-round, previous-round or start.`
+        );
+    }
+
+    const state = await this.getCombatTracker({ combatId: combat.id });
+    return {
+      changed: true,
+      action,
+      from: before ? { name: before.name, combatantId: before.id, round: roundBefore } : null,
+      ...state,
+    };
+  }
 
   /**
    * Wall and door geometry for the active scene (line of sight, cover,

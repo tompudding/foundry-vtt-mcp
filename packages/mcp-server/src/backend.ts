@@ -1612,6 +1612,16 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'get-combat-tracker':
+                  result = await sceneTools.handleGetCombatTracker(args);
+
+                  break;
+
+                case 'advance-combat':
+                  result = await sceneTools.handleAdvanceCombat(args);
+
+                  break;
+
                 case 'get-world-time':
                   result = await sceneTools.handleGetWorldTime(args);
 

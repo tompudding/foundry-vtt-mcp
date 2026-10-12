@@ -35,6 +35,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.getTokenState`] = this.handleGetTokenState.bind(this);
     CONFIG.queries[`${modulePrefix}.getTokenDistances`] = this.handleGetTokenDistances.bind(this);
     CONFIG.queries[`${modulePrefix}.applyTokenDamage`] = this.handleApplyTokenDamage.bind(this);
+    CONFIG.queries[`${modulePrefix}.getCombatTracker`] = this.handleGetCombatTracker.bind(this);
+    CONFIG.queries[`${modulePrefix}.advanceCombat`] = this.handleAdvanceCombat.bind(this);
     CONFIG.queries[`${modulePrefix}.getSceneWalls`] = this.handleGetSceneWalls.bind(this);
     CONFIG.queries[`${modulePrefix}.setDoorState`] = this.handleSetDoorState.bind(this);
     CONFIG.queries[`${modulePrefix}.setDoorsBatch`] = this.handleSetDoorsBatch.bind(this);
@@ -390,6 +392,44 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to apply damage: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleGetCombatTracker(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getCombatTracker(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to get combat tracker: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleAdvanceCombat(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      let allowed = false;
+      try {
+        allowed = !!(game as any).settings.get('foundry-mcp-bridge', 'allowCombatWrites');
+      } catch (_e) {
+        allowed = false;
+      }
+      if (!allowed) {
+        return {
+          error: 'Combat writes are disabled. Enable "Allow Combat Writes" in the Foundry MCP Bridge module settings.',
+          success: false,
+        };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.advanceCombat(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to advance combat: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

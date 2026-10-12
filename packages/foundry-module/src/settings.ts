@@ -220,7 +220,7 @@ export class ModuleSettings {
 
     game.settings.register(this.moduleId, 'allowCombatWrites', {
       name: 'Allow Combat Writes',
-      hint: 'Permit the MCP client to apply damage and healing to tokens, even while general write operations are disabled. No other writes are enabled by this setting.',
+      hint: 'Permit the MCP client to apply damage and healing to tokens and to move the combat tracker turn marker, even while general write operations are disabled. No other writes are enabled by this setting.',
       scope: 'world',
       config: true,
       type: Boolean,
