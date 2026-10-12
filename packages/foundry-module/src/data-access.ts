@@ -5085,6 +5085,172 @@ export class FoundryDataAccess {
     return { dead: hasDead(), deadMarkedBy: 'bridge' };
   }
 
+  // ---- Macros -------------------------------------------------------------
+
+  /**
+   * Find a macro by uuid, id or name. Accepts a journal-style link pasted
+   * whole ("@UUID[Macro.abc]{Break Display Case}") as well as bare uuids
+   * ("Macro.abc", "Compendium.pack.Macro.abc") and world macro ids.
+   */
+  private async resolveMacro(data: {
+    macro?: string;
+    uuid?: string;
+    id?: string;
+    name?: string;
+  }): Promise<{ macro: any | null; matches?: any[]; error?: string }> {
+    const g: any = game as any;
+    let ref = (data.uuid ?? data.macro ?? '').trim();
+    const link = ref.match(/@UUID\[([^\]]+)\]/);
+    if (link) ref = link[1];
+    if (ref) {
+      let doc: any = null;
+      if (ref.includes('.')) {
+        try {
+          doc = await fromUuid(ref);
+        } catch (_e) {
+          doc = null;
+        }
+      } else {
+        doc = g.macros?.get(ref) ?? null;
+      }
+      if (doc && doc.documentName === 'Macro') return { macro: doc };
+      if (data.uuid || ref.includes('.')) return { macro: null, error: `No macro found for "${ref}"` };
+      // A bare word given as `macro` may be a name rather than an id
+      data = { ...data, name: data.name ?? ref };
+    }
+    if (data.id) {
+      const doc = g.macros?.get(data.id);
+      return doc ? { macro: doc } : { macro: null, error: `No world macro with id ${data.id}` };
+    }
+    if (data.name) {
+      const want = data.name.trim().toLowerCase();
+      const all: any[] = g.macros?.contents ?? [];
+      const exact = all.filter((m: any) => String(m.name).toLowerCase() === want);
+      const hits = exact.length ? exact : all.filter((m: any) => String(m.name).toLowerCase().includes(want));
+      if (hits.length === 1) return { macro: hits[0] };
+      if (hits.length > 1) {
+        return {
+          macro: null,
+          matches: hits.map((m: any) => ({ uuid: m.uuid, name: m.name, type: m.type })),
+          error: `${hits.length} macros match "${data.name}"; pass a uuid`,
+        };
+      }
+      return { macro: null, error: `No world macro named "${data.name}"` };
+    }
+    return { macro: null, error: 'Provide macro (uuid, @UUID link, id or name), uuid, id or name' };
+  }
+
+  private describeMacro(m: any, includeCommand: boolean): any {
+    return {
+      uuid: m.uuid,
+      id: m.id,
+      name: m.name,
+      type: m.type, // "script" (JavaScript) or "chat" (posted as a chat message)
+      pack: m.pack ?? null,
+      folder: m.folder?.name ?? null,
+      author: m.author?.name ?? null,
+      img: m.img ?? null,
+      canExecute: !!m.canExecute,
+      ...(includeCommand ? { command: m.command ?? '' } : {}),
+    };
+  }
+
+  /**
+   * Read a macro (including its source) so the GM can see what it does
+   * before running it. With no identifier, lists the world's macros.
+   */
+  async getMacro(data: { macro?: string; uuid?: string; id?: string; name?: string } = {}): Promise<any> {
+    const g: any = game as any;
+    if (!data.macro && !data.uuid && !data.id && !data.name) {
+      const all: any[] = g.macros?.contents ?? [];
+      return {
+        count: all.length,
+        macros: all.map((m: any) => this.describeMacro(m, false)),
+      };
+    }
+    const found = await this.resolveMacro(data);
+    if (!found.macro) return { found: false, error: found.error, ...(found.matches ? { matches: found.matches } : {}) };
+    return { found: true, ...this.describeMacro(found.macro, true) };
+  }
+
+  /**
+   * Run a macro exactly as clicking it on the hotbar would. Optionally
+   * supply the token the macro should act as (its `token`/`actor`
+   * variables), and extra named values passed through the macro scope.
+   */
+  async executeMacro(data: {
+    macro?: string;
+    uuid?: string;
+    id?: string;
+    name?: string;
+    tokenId?: string;
+    tokenName?: string;
+    args?: Record<string, unknown>;
+  }): Promise<any> {
+    const found = await this.resolveMacro(data);
+    if (!found.macro) {
+      return { executed: false, error: found.error, ...(found.matches ? { matches: found.matches } : {}) };
+    }
+    const macro: any = found.macro;
+    if (!macro.canExecute) {
+      return { executed: false, error: `The GM user is not permitted to execute macro "${macro.name}"` };
+    }
+
+    const scope: Record<string, unknown> = { ...(data.args ?? {}) };
+    let tokenInfo: any = null;
+    if (data.tokenId || data.tokenName) {
+      const state = await this.getTokenState(
+        data.tokenId ? { tokenId: data.tokenId } : { tokenName: String(data.tokenName) }
+      );
+      if (state.ambiguous) return { executed: false, error: 'Token name is ambiguous', ...state };
+      const doc: any = (canvas as any)?.scene?.tokens?.get(state.tokenId);
+      if (!doc) return { executed: false, error: 'Token not found on the active scene' };
+      scope.token = doc.object ?? null;
+      scope.actor = doc.actor ?? null;
+      tokenInfo = { tokenId: doc.id, name: doc.name };
+    }
+
+    // Script macro errors are caught inside Foundry and only surface as a UI
+    // notification, so watch for one while the macro runs.
+    const errors: string[] = [];
+    const notifications: any = (ui as any).notifications;
+    const origError = notifications?.error?.bind(notifications);
+    if (notifications && origError) {
+      notifications.error = (msg: any, opts?: any) => {
+        errors.push(String(msg));
+        return origError(msg, opts);
+      };
+    }
+    let result: any;
+    try {
+      result = await macro.execute(scope);
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (notifications && origError) notifications.error = origError;
+    }
+
+    const summarize = (v: any): any => {
+      if (v === undefined || v === null) return null;
+      if (['string', 'number', 'boolean'].includes(typeof v)) return v;
+      if (v?.documentName) return { documentName: v.documentName, id: v.id, uuid: v.uuid ?? null, name: v.name ?? null };
+      try {
+        const json = JSON.stringify(v);
+        return json && json.length <= 2000 ? JSON.parse(json) : `[${v?.constructor?.name ?? typeof v}]`;
+      } catch (_e) {
+        return `[${v?.constructor?.name ?? typeof v}]`;
+      }
+    };
+
+    return {
+      executed: errors.length === 0,
+      macro: { uuid: macro.uuid, name: macro.name, type: macro.type },
+      ...(tokenInfo ? { asToken: tokenInfo } : {}),
+      result: summarize(result),
+      ...(errors.length ? { errors, note: 'The macro raised an error; check the Foundry console (F12) for details.' } : {}),
+    };
+  }
+
   // ---- Combat tracker ---------------------------------------------------
 
   private resolveCombat(combatId?: string): any {

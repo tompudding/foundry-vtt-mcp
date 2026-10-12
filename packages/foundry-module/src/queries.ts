@@ -36,6 +36,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.getTokenDistances`] = this.handleGetTokenDistances.bind(this);
     CONFIG.queries[`${modulePrefix}.applyTokenDamage`] = this.handleApplyTokenDamage.bind(this);
     CONFIG.queries[`${modulePrefix}.getCombatTracker`] = this.handleGetCombatTracker.bind(this);
+    CONFIG.queries[`${modulePrefix}.getMacro`] = this.handleGetMacro.bind(this);
+    CONFIG.queries[`${modulePrefix}.executeMacro`] = this.handleExecuteMacro.bind(this);
     CONFIG.queries[`${modulePrefix}.advanceCombat`] = this.handleAdvanceCombat.bind(this);
     CONFIG.queries[`${modulePrefix}.getSceneWalls`] = this.handleGetSceneWalls.bind(this);
     CONFIG.queries[`${modulePrefix}.setDoorState`] = this.handleSetDoorState.bind(this);
@@ -393,6 +395,40 @@ export class QueryHandlers {
       throw new Error(
         `Failed to apply damage: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
+    }
+  }
+
+  private async handleGetMacro(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getMacro(data ?? {});
+    } catch (error) {
+      throw new Error(`Failed to get macro: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleExecuteMacro(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      let allowed = false;
+      try {
+        allowed = !!(game as any).settings.get('foundry-mcp-bridge', 'allowMacroExecution');
+      } catch (_e) {
+        allowed = false;
+      }
+      if (!allowed) {
+        return {
+          error: 'Macro execution is disabled. Enable "Allow Macro Execution" in the Foundry MCP Bridge module settings.',
+          success: false,
+        };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.executeMacro(data ?? {});
+    } catch (error) {
+      throw new Error(`Failed to execute macro: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

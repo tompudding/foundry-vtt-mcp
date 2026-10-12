@@ -132,6 +132,32 @@ export class SceneTools {
         },
       },
       {
+        name: 'get-macro',
+        description:
+          'Read a Foundry macro, including its type (script = JavaScript, chat = chat text) and full command source, so you can see what it does before running it. Adventure journals link macros as @UUID[Macro.<id>]{Name} - pass that link straight in. With no arguments, lists all world macros (name, uuid, type).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            macro: { type: 'string', description: 'The macro: a journal link pasted as-is (@UUID[Macro.abc]{Name}), a uuid (Macro.abc or Compendium.pack.Macro.abc), a world macro id, or a name' },
+          },
+        },
+      },
+      {
+        name: 'execute-macro',
+        description:
+          'Run an existing Foundry macro exactly as if the GM clicked it, e.g. when a journal says "click the macro above". Identify it the same way as get-macro (a journal @UUID[Macro.<id>]{Name} link works directly). Read it with get-macro first if you are unsure what it does, and only run it when the scenario calls for it - effects may be visible to players and are not undoable. Some macros act on a token: pass tokenId/tokenName to set the macro\'s token and actor. Returns the macro\'s return value and any error it raised. Requires the module "Allow Macro Execution" setting.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            macro: { type: 'string', description: 'The macro: a journal link pasted as-is (@UUID[Macro.abc]{Name}), a uuid (Macro.abc or Compendium.pack.Macro.abc), a world macro id, or a name' },
+            tokenId: { type: 'string', description: 'Token the macro should act as (sets its token/actor variables)' },
+            tokenName: { type: 'string', description: 'Token name, alternative to tokenId' },
+            args: { type: 'object', description: 'Extra named values passed into the macro scope, for macros that expect them' },
+          },
+          required: ['macro'],
+        },
+      },
+      {
         name: 'get-combat-tracker',
         description:
           "Read Foundry's combat tracker for the current scene: round, whose turn it is (current), who is next (nextUp, skipping defeated), and every combatant in initiative order with initiative, defeated/hidden flags, HP and tokenId. unrolledInitiative lists anyone still needing a roll. Returns active: false if no encounter exists.",
@@ -455,6 +481,34 @@ export class SceneTools {
       throw new Error(
         `Failed to apply damage: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
+    }
+  }
+
+  async handleGetMacro(args: any): Promise<any> {
+    const params = z.object({ macro: z.string().optional() }).parse(args ?? {});
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getMacro', params);
+    } catch (error) {
+      this.logger.error('Failed to get macro', error);
+      throw new Error(`Failed to get macro: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async handleExecuteMacro(args: any): Promise<any> {
+    const params = z
+      .object({
+        macro: z.string(),
+        tokenId: z.string().optional(),
+        tokenName: z.string().optional(),
+        args: z.record(z.unknown()).optional(),
+      })
+      .parse(args ?? {});
+    this.logger.info('Executing macro', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.executeMacro', params);
+    } catch (error) {
+      this.logger.error('Failed to execute macro', error);
+      throw new Error(`Failed to execute macro: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

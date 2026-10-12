@@ -218,6 +218,15 @@ export class ModuleSettings {
       default: false,
     });
 
+    game.settings.register(this.moduleId, 'allowMacroExecution', {
+      name: 'Allow Macro Execution',
+      hint: 'Permit the MCP client to run existing macros (world or compendium), e.g. ones an adventure journal tells the GM to click. Macros run with full GM permissions and can change anything, so only enable this if you trust the macros in your world. The client cannot write new macro code.',
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: false,
+    });
+
     game.settings.register(this.moduleId, 'allowCombatWrites', {
       name: 'Allow Combat Writes',
       hint: 'Permit the MCP client to apply damage and healing to tokens and to move the combat tracker turn marker, even while general write operations are disabled. No other writes are enabled by this setting.',

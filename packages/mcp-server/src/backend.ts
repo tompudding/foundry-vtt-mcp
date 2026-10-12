@@ -1612,6 +1612,16 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'get-macro':
+                  result = await sceneTools.handleGetMacro(args);
+
+                  break;
+
+                case 'execute-macro':
+                  result = await sceneTools.handleExecuteMacro(args);
+
+                  break;
+
                 case 'get-combat-tracker':
                   result = await sceneTools.handleGetCombatTracker(args);
 
