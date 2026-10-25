@@ -171,9 +171,14 @@ class BackendClient {
         this.backendProcess = null; // Clear reference when backend exits
 
         if (code === 0) {
-          this.log('startBackend(): backend exited cleanly (likely lock failure), exiting wrapper');
-
-          process.exit(0); // Exit wrapper when backend fails to acquire lock
+          // A clean exit means another backend already holds the lock - e.g.
+          // Claude Desktop launched two wrappers at once and both spawned a
+          // backend. Do NOT exit: connectWithRetry() is still polling and will
+          // attach to the winning backend's control port. Exiting here made
+          // whichever wrapper lost the race report "Server disconnected".
+          this.log(
+            'startBackend(): backend exited cleanly (another backend holds the lock); connecting to it instead'
+          );
         } else if (code !== null) {
           this.log('startBackend(): backend exited unexpectedly', { exitCode: code });
         }

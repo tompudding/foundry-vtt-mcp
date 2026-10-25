@@ -3966,7 +3966,11 @@ export class FoundryDataAccess {
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-|-$/g, '');
       const titleCase = (slug: string): string =>
-        slug.split('-').filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        slug
+          .split('-')
+          .filter(Boolean)
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
       const resolveAttackEffects = (raw: any): any[] => {
         const slugs: string[] = Array.isArray(raw) ? raw : Array.from(raw ?? []);
         return slugs.map((entry: any) => {
@@ -3998,11 +4002,12 @@ export class FoundryDataAccess {
           return prepared.map(s => ({
             name: s.label ?? s.slug ?? s.item?.name,
             attackBonus: s.totalModifier ?? null,
-            damage: s.damageFormula ?? s.item?.system?.damageRolls
-              ? Object.values(s.item?.system?.damageRolls ?? {}).map(
-                  (d: any) => `${d.damage} ${d.damageType}`
-                ).join(', ')
-              : undefined,
+            damage:
+              (s.damageFormula ?? s.item?.system?.damageRolls)
+                ? Object.values(s.item?.system?.damageRolls ?? {})
+                    .map((d: any) => `${d.damage} ${d.damageType}`)
+                    .join(', ')
+                : undefined,
             traits: (s.traits ?? []).map((t: any) => t.name ?? t.label ?? t),
             ready: s.ready ?? undefined,
             attackEffects: resolveAttackEffects(
@@ -4022,9 +4027,7 @@ export class FoundryDataAccess {
       });
 
       out.abilities = guard(() =>
-        Object.fromEntries(
-          Object.entries(actor.abilities ?? {}).map(([k, v]: any) => [k, v.mod])
-        )
+        Object.fromEntries(Object.entries(actor.abilities ?? {}).map(([k, v]: any) => [k, v.mod]))
       );
 
       out.skills = guard(() =>
@@ -4317,9 +4320,8 @@ export class FoundryDataAccess {
 
     if (data.selected) {
       // Tokens currently selected (controlled) on the GM's canvas
-      const controlled: any[] = (typeof canvas !== 'undefined'
-        ? ((canvas as any)?.tokens?.controlled ?? [])
-        : []
+      const controlled: any[] = (
+        typeof canvas !== 'undefined' ? ((canvas as any)?.tokens?.controlled ?? []) : []
       ).map((p: any) => p.document ?? p);
       if (controlled.length === 0) {
         throw new Error('No tokens are selected on the canvas');
@@ -4365,7 +4367,9 @@ export class FoundryDataAccess {
       }
       if (bestToken) matches = [bestToken];
     } else {
-      throw new Error('Provide tokenId, tokenName, x/y coordinates, selected/targeted: true, or all: true');
+      throw new Error(
+        'Provide tokenId, tokenName, x/y coordinates, selected/targeted: true, or all: true'
+      );
     }
 
     if (matches.length === 0) throw new Error('No matching token on the active scene');
@@ -4378,7 +4382,6 @@ export class FoundryDataAccess {
     }
     return describe(matches[0]);
   }
-
 
   /**
    * Measure grid distances from an origin token to other tokens using the
@@ -4431,7 +4434,9 @@ export class FoundryDataAccess {
         docs.find(t => (t.name ?? '').toLowerCase() === q) ??
         docs.find(t => (t.name ?? '').toLowerCase().includes(q));
     } else {
-      throw new Error('Provide tokenId, tokenName, selected: true, or targeted: true for the origin');
+      throw new Error(
+        'Provide tokenId, tokenName, selected: true, or targeted: true for the origin'
+      );
     }
     if (!origin) throw new Error('Origin token not found on the viewed scene');
     const originObj: any = origin.object;
@@ -4602,10 +4607,12 @@ export class FoundryDataAccess {
     };
   }
 
-
   /** Standard level-based DCs (Player Core GM tools); pwol subtracts level. */
   private identifyBaseDC(level: number, pwol: boolean): number {
-    const table = [14,15,16,18,19,20,22,23,24,26,27,28,30,31,32,34,35,36,38,39,40,42,44,46,48,50];
+    const table = [
+      14, 15, 16, 18, 19, 20, 22, 23, 24, 26, 27, 28, 30, 31, 32, 34, 35, 36, 38, 39, 40, 42, 44,
+      46, 48, 50,
+    ];
     const lv = Math.max(0, Math.min(25, level ?? 0));
     return table[lv] - (pwol ? lv : 0);
   }
@@ -4614,12 +4621,19 @@ export class FoundryDataAccess {
     let pwol = false;
     let mismatch = 5;
     try {
-      pwol = (game as any).settings.get('pf2e', 'proficiencyVariant') === true
-        || (game as any).settings.get('pf2e', 'proficiencyVariant') === 'ProficiencyWithoutLevel';
-    } catch (_e) { /* default */ }
+      pwol =
+        (game as any).settings.get('pf2e', 'proficiencyVariant') === true ||
+        (game as any).settings.get('pf2e', 'proficiencyVariant') === 'ProficiencyWithoutLevel';
+    } catch (_e) {
+      /* default */
+    }
     try {
-      mismatch = Number((game as any).settings.get('pf2e', 'identifyMagicNotMatchingTraditionModifier')) || 5;
-    } catch (_e) { /* default */ }
+      mismatch =
+        Number((game as any).settings.get('pf2e', 'identifyMagicNotMatchingTraditionModifier')) ||
+        5;
+    } catch (_e) {
+      /* default */
+    }
     const cursed = item.traits?.has?.('cursed') ?? false;
     const rarity: string = cursed ? 'unique' : (item.rarity ?? 'common');
     const rarityAdj: Record<string, number> = { common: 0, uncommon: 2, rare: 5, unique: 10 };
@@ -4627,7 +4641,10 @@ export class FoundryDataAccess {
     if (item.isMagical) {
       // tradition -> identifying skill; non-matching traditions are harder
       const traditionSkill: Record<string, string> = {
-        arcane: 'arcana', divine: 'religion', occult: 'occultism', primal: 'nature',
+        arcane: 'arcana',
+        divine: 'religion',
+        occult: 'occultism',
+        primal: 'nature',
       };
       const traits: string[] = item.system?.traits?.value ?? [];
       const present = Object.keys(traditionSkill).filter(t => traits.includes(t));
@@ -4647,7 +4664,10 @@ export class FoundryDataAccess {
     return ['character', 'party', 'familiar'].includes(actor.type);
   }
 
-  private collectIdentifiableActors(data: { allScenes?: boolean; includePlayerOwned?: boolean }): any[] {
+  private collectIdentifiableActors(data: {
+    allScenes?: boolean;
+    includePlayerOwned?: boolean;
+  }): any[] {
     const actors = new Map<string, any>();
     const scenes: any[] = data.allScenes
       ? Array.from((game as any).scenes ?? [])
@@ -4690,7 +4710,9 @@ export class FoundryDataAccess {
       if (data.tokenId) lookup.tokenId = data.tokenId;
       if (data.tokenName) lookup.tokenName = data.tokenName;
       const state = await this.getTokenState(lookup);
-      const ids: string[] = state.tokens ? state.tokens.map((t: any) => t.tokenId) : [state.tokenId];
+      const ids: string[] = state.tokens
+        ? state.tokens.map((t: any) => t.tokenId)
+        : [state.tokenId];
       const scene: any = typeof canvas !== 'undefined' ? (canvas as any)?.scene : null;
       actors = ids.map(id => scene?.tokens?.get(id)?.actor).filter(Boolean);
     } else {
@@ -4710,9 +4732,10 @@ export class FoundryDataAccess {
           // Prepared `name` is swapped to the mystified name while unidentified;
           // the real name lives untouched in source data.
           trueName: it._source?.name ?? it.name, // GM-only knowledge while mystified
-          displayedName: status === 'unidentified'
-            ? (it.name || it.system.identification.unidentified?.name || 'Unusual item')
-            : it.name,
+          displayedName:
+            status === 'unidentified'
+              ? it.name || it.system.identification.unidentified?.name || 'Unusual item'
+              : it.name,
           status,
           owner: actor.name,
           level: it.level ?? 0,
@@ -4769,7 +4792,9 @@ export class FoundryDataAccess {
       await item.update({ 'system.identification.status': status });
     }
     if (data.action === 'identify' && data.postChat !== false) {
-      const img = item.img ? `<img src="${item.img}" width="36" height="36" style="vertical-align:middle;border:none;margin-right:6px;"/>` : '';
+      const img = item.img
+        ? `<img src="${item.img}" width="36" height="36" style="vertical-align:middle;border:none;margin-right:6px;"/>`
+        : '';
       await (globalThis as any).ChatMessage.create({
         content: `<div class="pf2e chat-card">${img}<strong>Item identified:</strong> ${item.name}</div>`,
         speaker: { alias: 'Identification' },
@@ -4777,7 +4802,6 @@ export class FoundryDataAccess {
     }
     return { action: data.action, itemUuid: item.uuid, name: item.name, status };
   }
-
 
   /**
    * Apply damage or healing to a token's SYNTHETIC actor through the game
@@ -4800,7 +4824,8 @@ export class FoundryDataAccess {
     reason?: string;
   }): Promise<any> {
     // Resolve the target token document(s) by reusing getTokenState's matcher
-    const lookup: { selected?: boolean; targeted?: boolean; tokenId?: string; tokenName?: string } = {};
+    const lookup: { selected?: boolean; targeted?: boolean; tokenId?: string; tokenName?: string } =
+      {};
     if (data.selected) lookup.selected = true;
     if (data.targeted) lookup.targeted = true;
     if (data.tokenId) lookup.tokenId = data.tokenId;
@@ -4810,7 +4835,9 @@ export class FoundryDataAccess {
     }
     const state = await this.getTokenState(lookup);
     if (state.ambiguous) return state; // pass the disambiguation list straight back
-    const tokenIds: string[] = state.tokens ? state.tokens.map((t: any) => t.tokenId) : [state.tokenId];
+    const tokenIds: string[] = state.tokens
+      ? state.tokens.map((t: any) => t.tokenId)
+      : [state.tokenId];
 
     const scene: any = typeof canvas !== 'undefined' ? (canvas as any)?.scene : null;
     if (!scene) throw new Error('No active scene');
@@ -5114,7 +5141,8 @@ export class FoundryDataAccess {
         doc = g.macros?.get(ref) ?? null;
       }
       if (doc && doc.documentName === 'Macro') return { macro: doc };
-      if (data.uuid || ref.includes('.')) return { macro: null, error: `No macro found for "${ref}"` };
+      if (data.uuid || ref.includes('.'))
+        return { macro: null, error: `No macro found for "${ref}"` };
       // A bare word given as `macro` may be a name rather than an id
       data = { ...data, name: data.name ?? ref };
     }
@@ -5126,7 +5154,9 @@ export class FoundryDataAccess {
       const want = data.name.trim().toLowerCase();
       const all: any[] = g.macros?.contents ?? [];
       const exact = all.filter((m: any) => String(m.name).toLowerCase() === want);
-      const hits = exact.length ? exact : all.filter((m: any) => String(m.name).toLowerCase().includes(want));
+      const hits = exact.length
+        ? exact
+        : all.filter((m: any) => String(m.name).toLowerCase().includes(want));
       if (hits.length === 1) return { macro: hits[0] };
       if (hits.length > 1) {
         return {
@@ -5159,7 +5189,9 @@ export class FoundryDataAccess {
    * Read a macro (including its source) so the GM can see what it does
    * before running it. With no identifier, lists the world's macros.
    */
-  async getMacro(data: { macro?: string; uuid?: string; id?: string; name?: string } = {}): Promise<any> {
+  async getMacro(
+    data: { macro?: string; uuid?: string; id?: string; name?: string } = {}
+  ): Promise<any> {
     const g: any = game as any;
     if (!data.macro && !data.uuid && !data.id && !data.name) {
       const all: any[] = g.macros?.contents ?? [];
@@ -5169,7 +5201,12 @@ export class FoundryDataAccess {
       };
     }
     const found = await this.resolveMacro(data);
-    if (!found.macro) return { found: false, error: found.error, ...(found.matches ? { matches: found.matches } : {}) };
+    if (!found.macro)
+      return {
+        found: false,
+        error: found.error,
+        ...(found.matches ? { matches: found.matches } : {}),
+      };
     return { found: true, ...this.describeMacro(found.macro, true) };
   }
 
@@ -5189,11 +5226,18 @@ export class FoundryDataAccess {
   }): Promise<any> {
     const found = await this.resolveMacro(data);
     if (!found.macro) {
-      return { executed: false, error: found.error, ...(found.matches ? { matches: found.matches } : {}) };
+      return {
+        executed: false,
+        error: found.error,
+        ...(found.matches ? { matches: found.matches } : {}),
+      };
     }
     const macro: any = found.macro;
     if (!macro.canExecute) {
-      return { executed: false, error: `The GM user is not permitted to execute macro "${macro.name}"` };
+      return {
+        executed: false,
+        error: `The GM user is not permitted to execute macro "${macro.name}"`,
+      };
     }
 
     const scope: Record<string, unknown> = { ...(data.args ?? {}) };
@@ -5233,10 +5277,18 @@ export class FoundryDataAccess {
     const summarize = (v: any): any => {
       if (v === undefined || v === null) return null;
       if (['string', 'number', 'boolean'].includes(typeof v)) return v;
-      if (v?.documentName) return { documentName: v.documentName, id: v.id, uuid: v.uuid ?? null, name: v.name ?? null };
+      if (v?.documentName)
+        return {
+          documentName: v.documentName,
+          id: v.id,
+          uuid: v.uuid ?? null,
+          name: v.name ?? null,
+        };
       try {
         const json = JSON.stringify(v);
-        return json && json.length <= 2000 ? JSON.parse(json) : `[${v?.constructor?.name ?? typeof v}]`;
+        return json && json.length <= 2000
+          ? JSON.parse(json)
+          : `[${v?.constructor?.name ?? typeof v}]`;
       } catch (_e) {
         return `[${v?.constructor?.name ?? typeof v}]`;
       }
@@ -5247,7 +5299,12 @@ export class FoundryDataAccess {
       macro: { uuid: macro.uuid, name: macro.name, type: macro.type },
       ...(tokenInfo ? { asToken: tokenInfo } : {}),
       result: summarize(result),
-      ...(errors.length ? { errors, note: 'The macro raised an error; check the Foundry console (F12) for details.' } : {}),
+      ...(errors.length
+        ? {
+            errors,
+            note: 'The macro raised an error; check the Foundry console (F12) for details.',
+          }
+        : {}),
     };
   }
 
@@ -5429,7 +5486,7 @@ export class FoundryDataAccess {
     const gridSize = scene.grid?.size || 100;
     const DOOR = ['wall', 'door', 'secret'];
     const DOOR_STATE = ['closed', 'open', 'locked'];
-    const dirName = (d: number) => (['both', 'left', 'right'][d] ?? 'both');
+    const dirName = (d: number) => ['both', 'left', 'right'][d] ?? 'both';
     const walls: any[] = [];
     const doors: any[] = [];
     for (const w of Array.from(scene.walls ?? []) as any[]) {
@@ -5456,8 +5513,18 @@ export class FoundryDataAccess {
 
       const entry: any = {
         id: w.id,
-        from: { x: c[0], y: c[1], gx: +(c[0] / gridSize).toFixed(2), gy: +(c[1] / gridSize).toFixed(2) },
-        to: { x: c[2], y: c[3], gx: +(c[2] / gridSize).toFixed(2), gy: +(c[3] / gridSize).toFixed(2) },
+        from: {
+          x: c[0],
+          y: c[1],
+          gx: +(c[0] / gridSize).toFixed(2),
+          gy: +(c[1] / gridSize).toFixed(2),
+        },
+        to: {
+          x: c[2],
+          y: c[3],
+          gx: +(c[2] / gridSize).toFixed(2),
+          gy: +(c[3] / gridSize).toFixed(2),
+        },
         blocksMove,
         blocksSight,
         invisible,
@@ -5482,7 +5549,6 @@ export class FoundryDataAccess {
       walls: data.doorsOnly ? undefined : walls,
     };
   }
-
 
   /**
    * Corner-to-corner line of sight between two tokens. Casts rays from each of
@@ -5523,23 +5589,44 @@ export class FoundryDataAccess {
       if (id) return docs.find(t => t.id === id);
       if (name) {
         const q = name.toLowerCase();
-        return docs.find(t => (t.name ?? '').toLowerCase() === q)
-          ?? docs.find(t => (t.name ?? '').toLowerCase().includes(q));
+        return (
+          docs.find(t => (t.name ?? '').toLowerCase() === q) ??
+          docs.find(t => (t.name ?? '').toLowerCase().includes(q))
+        );
       }
       throw new Error(`Provide a ${which} token (id, name, selected/targeted)`);
     };
 
-    const src = resolve(data.sourceTokenId, data.sourceTokenName, data.sourceSelected, false, 'source');
-    const tgt = resolve(data.targetTokenId, data.targetTokenName, false, data.targetTargeted, 'target');
+    const src = resolve(
+      data.sourceTokenId,
+      data.sourceTokenName,
+      data.sourceSelected,
+      false,
+      'source'
+    );
+    const tgt = resolve(
+      data.targetTokenId,
+      data.targetTokenName,
+      false,
+      data.targetTargeted,
+      'target'
+    );
     if (!src || !tgt) throw new Error('Source or target token not found');
 
     // Token corners are EXACT. An inset nudges a ray that should graze a wall
     // edge onto an arbitrary side, losing legitimately-clear sightlines; the
     // grazing case is handled by the endpoint rule in blocksRay() instead.
     const corners = (t: any) => {
-      const x0 = t.x, y0 = t.y;
-      const x1 = t.x + t.width * gridSize, y1 = t.y + t.height * gridSize;
-      return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x0, y: y1 }, { x: x1, y: y1 }];
+      const x0 = t.x,
+        y0 = t.y;
+      const x1 = t.x + t.width * gridSize,
+        y1 = t.y + t.height * gridSize;
+      return [
+        { x: x0, y: y0 },
+        { x: x1, y: y0 },
+        { x: x0, y: y1 },
+        { x: x1, y: y1 },
+      ];
     };
 
     // ---- Scene levels (Foundry v14 multi-level scenes) --------------------
@@ -5582,7 +5669,7 @@ export class FoundryDataAccess {
       if (doorOpen || (w.sight ?? 1) === 0) return false;
       return wallOnSourceLevel(w);
     });
-    const sightWalls = sightWallDocs.map(w => (w.c ?? w._source?.c ?? []));
+    const sightWalls = sightWallDocs.map(w => w.c ?? w._source?.c ?? []);
 
     // ---- Exact segment intersection with endpoint (grazing) semantics ------
     // orient() returns the SIGN of the cross product: 0 means exactly collinear,
@@ -5599,8 +5686,10 @@ export class FoundryDataAccess {
       return v > 0 ? 1 : v < 0 ? -1 : 0;
     };
     const onSeg = (ax: number, ay: number, bx: number, by: number, px: number, py: number) =>
-      Math.min(ax, bx) <= px && px <= Math.max(ax, bx) &&
-      Math.min(ay, by) <= py && py <= Math.max(ay, by);
+      Math.min(ax, bx) <= px &&
+      px <= Math.max(ax, bx) &&
+      Math.min(ay, by) <= py &&
+      py <= Math.max(ay, by);
 
     const keyOf = (x: number, y: number) => `${Math.round(x * 100)}:${Math.round(y * 100)}`;
 
@@ -5691,32 +5780,43 @@ export class FoundryDataAccess {
       }
       return false;
     };
-    const sc = corners(src), tc = corners(tgt);
+    const sc = corners(src),
+      tc = corners(tgt);
 
     // ---- DEBUG LOGGING (remove once verified) ----
     const LOS_DEBUG = false;
     const r2 = (n: number) => Math.round(n * 100) / 100;
     if (LOS_DEBUG) {
-      console.log(`[LoS] ${src.name} (${r2(src.x)},${r2(src.y)} ${src.width}x${src.height}) ` +
-        `-> ${tgt.name} (${r2(tgt.x)},${r2(tgt.y)} ${tgt.width}x${tgt.height}); gridSize=${gridSize}`);
-      console.log(`[LoS] source corners: ` +
-        sc.map((c, i) => `S${i}(${r2(c.x)},${r2(c.y)})`).join(' '));
-      console.log(`[LoS] target corners: ` +
-        tc.map((c, i) => `T${i}(${r2(c.x)},${r2(c.y)})`).join(' '));
+      console.log(
+        `[LoS] ${src.name} (${r2(src.x)},${r2(src.y)} ${src.width}x${src.height}) ` +
+          `-> ${tgt.name} (${r2(tgt.x)},${r2(tgt.y)} ${tgt.width}x${tgt.height}); gridSize=${gridSize}`
+      );
+      console.log(
+        `[LoS] source corners: ` + sc.map((c, i) => `S${i}(${r2(c.x)},${r2(c.y)})`).join(' ')
+      );
+      console.log(
+        `[LoS] target corners: ` + tc.map((c, i) => `T${i}(${r2(c.x)},${r2(c.y)})`).join(' ')
+      );
       const lvlName = (l: any, e: number) =>
         l ? `${l.name} [${l.elevation?.bottom}-${l.elevation?.top}] @elev ${e}` : `none @elev ${e}`;
-      console.log(`[LoS] scene levels: ` +
-        (sceneLevels.length
-          ? sceneLevels.map(l => `${l.name}(${l.elevation?.bottom}-${l.elevation?.top})`).join(', ')
-          : '(none configured)'));
+      console.log(
+        `[LoS] scene levels: ` +
+          (sceneLevels.length
+            ? sceneLevels
+                .map(l => `${l.name}(${l.elevation?.bottom}-${l.elevation?.top})`)
+                .join(', ')
+            : '(none configured)')
+      );
       console.log(`[LoS] source level: ${lvlName(srcLevel, srcElev)}`);
       console.log(`[LoS] target level: ${lvlName(tgtLevel, tgtElev)}`);
       const totalSightWalls = (Array.from(scene.walls ?? []) as any[]).filter(w => {
         const doorOpen = (w.door ?? 0) > 0 && (w.ds ?? 0) === 1;
         return !doorOpen && (w.sight ?? 1) !== 0;
       }).length;
-      console.log(`[LoS] ${sightWalls.length} sight-blocking wall(s) on the source level ` +
-        `(${totalSightWalls} in the whole scene${data.ignoreLevels ? '; level filter DISABLED' : ''}):`);
+      console.log(
+        `[LoS] ${sightWalls.length} sight-blocking wall(s) on the source level ` +
+          `(${totalSightWalls} in the whole scene${data.ignoreLevels ? '; level filter DISABLED' : ''}):`
+      );
       sightWallDocs.forEach((wd, i) => {
         const w = sightWalls[i];
         const ids = wallLevelIds(wd);
@@ -5724,7 +5824,8 @@ export class FoundryDataAccess {
           ? ids.map(id => sceneLevels.find(l => l._id === id)?.name ?? id).join('+')
           : 'all-levels';
         const nAt = (x: number, y: number) => (adjacency.get(keyOf(x, y)) ?? []).length;
-        const endTag = (x: number, y: number) => (nAt(x, y) > 1 ? `junction(${nAt(x, y)})` : 'free');
+        const endTag = (x: number, y: number) =>
+          nAt(x, y) > 1 ? `junction(${nAt(x, y)})` : 'free';
         const ends = `ends:${endTag(w[0], w[1])}/${endTag(w[2], w[3])}`;
         console.log(
           `[LoS]   W${i}: (${r2(w[0])},${r2(w[1])})->(${r2(w[2])},${r2(w[3])}) [${tags}] ${ends}`
@@ -5757,13 +5858,18 @@ export class FoundryDataAccess {
             ? grazes
               ? 'CLEAR (grazing -- only touches wall geometry)'
               : 'CLEAR'
-            : 'BLOCKED by ' + blockers.map(({ wi, w }) =>
-                `W${wi}(${r2(w[0])},${r2(w[1])})->(${r2(w[2])},${r2(w[3])})`).join(', ');
-          console.log(`[LoS]   ray S${si}(${r2(s.x)},${r2(s.y)})->T${ti}(${r2(t.x)},${r2(t.y)}): ${hit}`);
+            : 'BLOCKED by ' +
+              blockers
+                .map(({ wi, w }) => `W${wi}(${r2(w[0])},${r2(w[1])})->(${r2(w[2])},${r2(w[3])})`)
+                .join(', ');
+          console.log(
+            `[LoS]   ray S${si}(${r2(s.x)},${r2(s.y)})->T${ti}(${r2(t.x)},${r2(t.y)}): ${hit}`
+          );
         }
       }
       if (cornerClear === 4) anyCornerFullyClear = true;
-      if (LOS_DEBUG) console.log(`[LoS]  source corner S${si}: ${cornerClear}/4 target corners visible`);
+      if (LOS_DEBUG)
+        console.log(`[LoS]  source corner S${si}: ${cornerClear}/4 target corners visible`);
     }
 
     // A creature can sight from anywhere in its space: if ANY source corner sees
@@ -5786,14 +5892,18 @@ export class FoundryDataAccess {
     }
 
     if (LOS_DEBUG) {
-      console.log(`[LoS] RESULT: ${result} (clearRays=${clearRays}/16, ` +
-        `truly=${trulyClearRays}, grazing=${grazingRays}, ` +
-        `anyCornerFullyClear=${anyCornerFullyClear}` +
-        (crossLevel ? `, crossLevel=true` : '') + `)`);
+      console.log(
+        `[LoS] RESULT: ${result} (clearRays=${clearRays}/16, ` +
+          `truly=${trulyClearRays}, grazing=${grazingRays}, ` +
+          `anyCornerFullyClear=${anyCornerFullyClear}` +
+          (crossLevel ? `, crossLevel=true` : '') +
+          `)`
+      );
     }
 
     const levelInfo = (l: any, e: number) =>
-      l ? { name: l.name, bottom: l.elevation?.bottom, top: l.elevation?.top, elevation: e }
+      l
+        ? { name: l.name, bottom: l.elevation?.bottom, top: l.elevation?.top, elevation: e }
         : { name: null, elevation: e };
 
     return {
@@ -5806,20 +5916,24 @@ export class FoundryDataAccess {
       totalRays: 16,
       sightBlockingWalls: sightWalls.length,
       crossLevel,
-      levelFilter: data.ignoreLevels ? 'disabled' : srcLevel ? srcLevel.name : 'no levels configured',
-      note: crossLevel && !data.crossLevelSight && !data.ignoreLevels
-        ? `Tokens are on different levels (${srcLevel.name} vs ${tgtLevel.name}); reported as blocked. ` +
-          'Pass crossLevelSight: true for the raw 2-D verdict if a balcony or stairwell connects them.'
-        : result === 'cover'
-          ? 'Some but not all corner-to-corner rays are clear: the target likely has cover (GM adjudicates lesser vs standard).'
-          : result === 'clear'
-            ? 'At least one source corner sees all target corners: unobstructed.'
-            : grazingRays > 0
-              ? 'No ray is truly clear: every unblocked ray only grazes wall geometry (corner or face), so nothing is really visible.'
-              : 'All 16 rays cross a sight-blocking wall: no line of sight.',
+      levelFilter: data.ignoreLevels
+        ? 'disabled'
+        : srcLevel
+          ? srcLevel.name
+          : 'no levels configured',
+      note:
+        crossLevel && !data.crossLevelSight && !data.ignoreLevels
+          ? `Tokens are on different levels (${srcLevel.name} vs ${tgtLevel.name}); reported as blocked. ` +
+            'Pass crossLevelSight: true for the raw 2-D verdict if a balcony or stairwell connects them.'
+          : result === 'cover'
+            ? 'Some but not all corner-to-corner rays are clear: the target likely has cover (GM adjudicates lesser vs standard).'
+            : result === 'clear'
+              ? 'At least one source corner sees all target corners: unobstructed.'
+              : grazingRays > 0
+                ? 'No ray is truly clear: every unblocked ray only grazes wall geometry (corner or face), so nothing is really visible.'
+                : 'All 16 rays cross a sight-blocking wall: no line of sight.',
     };
   }
-
 
   /**
    * Read the world clock. PF2e layers a Golarion calendar over Foundry's raw
@@ -5849,8 +5963,7 @@ export class FoundryDataAccess {
     }
     const dt = clock.worldTime;
     const timeConvention = clock.timeConvention ?? 24;
-    const time =
-      timeConvention === 12 ? dt.toFormat('hh:mm:ss a') : dt.toFormat('HH:mm:ss');
+    const time = timeConvention === 12 ? dt.toFormat('hh:mm:ss a') : dt.toFormat('HH:mm:ss');
     const day = dt.day;
     const ordinal = (n: number) => {
       const rem100 = n % 100;
@@ -5867,7 +5980,8 @@ export class FoundryDataAccess {
       era: clock.era,
       time,
       dateTheme: clock.dateTheme,
-      formatted: `${clock.weekday} ${ordinal(day)} of ${clock.month} ${clock.year} ${clock.era} ${time}`.trim(),
+      formatted:
+        `${clock.weekday} ${ordinal(day)} of ${clock.month} ${clock.year} ${clock.era} ${time}`.trim(),
       system: (game as any).system?.id ?? null,
     };
   }
@@ -5892,7 +6006,8 @@ export class FoundryDataAccess {
       const clock: any = (game as any).pf2e?.worldClock;
       if (!clock) throw new Error('setTimeOfDay requires the PF2e world clock');
       const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(data.setTimeOfDay.trim());
-      if (!m) throw new Error(`Invalid setTimeOfDay "${data.setTimeOfDay}"; expected HH:MM or HH:MM:SS`);
+      if (!m)
+        throw new Error(`Invalid setTimeOfDay "${data.setTimeOfDay}"; expected HH:MM or HH:MM:SS`);
       const [h, mi, se] = [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)];
       if (h > 23 || mi > 59 || se > 59) throw new Error('setTimeOfDay is out of range');
       const now = clock.worldTime;
@@ -5906,9 +6021,7 @@ export class FoundryDataAccess {
         Math.trunc(data.hours ?? 0) * 3600 +
         Math.trunc(data.days ?? 0) * 86400;
       if (delta === 0) {
-        throw new Error(
-          'Provide a non-zero days/hours/minutes/seconds amount, or setTimeOfDay'
-        );
+        throw new Error('Provide a non-zero days/hours/minutes/seconds amount, or setTimeOfDay');
       }
     }
 
@@ -5918,7 +6031,12 @@ export class FoundryDataAccess {
     await (game as any).time.advance(delta);
 
     const after = await this.getWorldTime();
-    return { advancedBySeconds: delta, before: before.formatted, after: after.formatted, now: after };
+    return {
+      advancedBySeconds: delta,
+      before: before.formatted,
+      after: after.formatted,
+      now: after,
+    };
   }
 
   /**
@@ -5974,9 +6092,12 @@ export class FoundryDataAccess {
     return { shared: true, image: data.image, title, method, activePlayerCount: users };
   }
 
-
   /** Shared helpers for region reporting. */
-  private regionElevationBand(region: any): { bottom: number | null; top: number | null; topInclusive: boolean } {
+  private regionElevationBand(region: any): {
+    bottom: number | null;
+    top: number | null;
+    topInclusive: boolean;
+  } {
     const e = region.elevation ?? {};
     return {
       // null means UNBOUNDED in that direction, not zero
@@ -6040,7 +6161,9 @@ export class FoundryDataAccess {
       locked: !!region.locked,
       color: region.color ?? null,
       // v14 multi-level scenes: which level(s) the region belongs to
-      levels: Array.isArray(region.levels) ? region.levels.slice() : Array.from(region.levels ?? []),
+      levels: Array.isArray(region.levels)
+        ? region.levels.slice()
+        : Array.from(region.levels ?? []),
       behaviors: Array.from(region.behaviors ?? []).map((b: any) => ({
         type: b.type,
         name: b.name ?? null,
@@ -6067,7 +6190,9 @@ export class FoundryDataAccess {
     } else if (data.regionName) {
       const q = data.regionName.toLowerCase();
       const exact = regions.filter(r => (r.name ?? '').toLowerCase() === q);
-      regions = exact.length ? exact : regions.filter(r => (r.name ?? '').toLowerCase().includes(q));
+      regions = exact.length
+        ? exact
+        : regions.filter(r => (r.name ?? '').toLowerCase().includes(q));
     }
     if ((data.regionId || data.regionName) && regions.length === 0) {
       throw new Error('No matching region on the active scene');
@@ -6112,7 +6237,9 @@ export class FoundryDataAccess {
     }
     const state = await this.getTokenState(lookup);
     if (state.ambiguous) return state;
-    const tokenIds: string[] = state.tokens ? state.tokens.map((t: any) => t.tokenId) : [state.tokenId];
+    const tokenIds: string[] = state.tokens
+      ? state.tokens.map((t: any) => t.tokenId)
+      : [state.tokenId];
 
     let regions: any[] = Array.from(scene.regions ?? []);
     if (data.regionId) {
@@ -6120,7 +6247,9 @@ export class FoundryDataAccess {
     } else if (data.regionName) {
       const q = data.regionName.toLowerCase();
       const exact = regions.filter(r => (r.name ?? '').toLowerCase() === q);
-      regions = exact.length ? exact : regions.filter(r => (r.name ?? '').toLowerCase().includes(q));
+      regions = exact.length
+        ? exact
+        : regions.filter(r => (r.name ?? '').toLowerCase().includes(q));
     }
     if (regions.length === 0) throw new Error('No matching region on the active scene');
 
@@ -6177,14 +6306,14 @@ export class FoundryDataAccess {
           centreInside: centreInside ?? null,
           cornersInside,
           totalCorners: 4,
-          partial: inside && (cornersInside > 0 && cornersInside < 4),
+          partial: inside && cornersInside > 0 && cornersInside < 4,
           outsideElevationBand: outsideBand,
           foundryMembership: membership,
           method: geometricKnown ? 'testPoint + membership' : 'membership only',
           note: outsideBand
-            ? 'Geometrically inside, but the token\'s elevation is outside the region\'s band, so Foundry excludes it.'
+            ? "Geometrically inside, but the token's elevation is outside the region's band, so Foundry excludes it."
             : inside && !membership
-              ? 'Geometrically inside but absent from Foundry\'s membership set (region behaviors or elevation may exclude it).'
+              ? "Geometrically inside but absent from Foundry's membership set (region behaviors or elevation may exclude it)."
               : null,
         });
       }
@@ -6205,7 +6334,10 @@ export class FoundryDataAccess {
     // type even without a "type:" prefix, so @Check[fortitude|dc:14] is valid
     // and common in published content. Reading only key:value pairs lost it.
     const inlineParams = (spec: string): Record<string, string> => {
-      const segments = String(spec).split('|').map(x => x.trim()).filter(Boolean);
+      const segments = String(spec)
+        .split('|')
+        .map(x => x.trim())
+        .filter(Boolean);
       const out: Record<string, string> = {};
       segments.forEach((seg, i) => {
         const idx = seg.indexOf(':');
@@ -6230,9 +6362,11 @@ export class FoundryDataAccess {
         const basic = String(parts.basic) === 'true' ? 'basic ' : '';
         return parts.dc ? `DC ${parts.dc} ${basic}${type}` : `${basic}${type} check`;
       })
-      .replace(
-        /@Damage\[((?:[^[\]]|\[[^\]]*\])*)\](?:\{[^}]*\})?/g,
-        (_m, body) => String(body).replace(/[[\]()]/g, ' ').replace(/\s+/g, ' ').trim()
+      .replace(/@Damage\[((?:[^[\]]|\[[^\]]*\])*)\](?:\{[^}]*\})?/g, (_m, body) =>
+        String(body)
+          .replace(/[[\]()]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
       )
       .replace(/@Template\[([^\]]*)\](?:\{([^}]*)\})?/g, (_m, spec, label) => {
         if (label) return label;
@@ -6252,7 +6386,6 @@ export class FoundryDataAccess {
     if (!text) return null;
     return text.length > cap ? text.slice(0, cap) + '\u2026' : text;
   }
-
 
   /** Door constants, read from CONST at runtime (their numbers have moved between
    * Foundry versions) with the documented values as a fallback. */
@@ -6305,9 +6438,7 @@ export class FoundryDataAccess {
   }
 
   private resolveDoorScene(sceneId?: string): any {
-    const scene: any = sceneId
-      ? (game as any).scenes?.get(sceneId)
-      : (game as any).scenes?.current;
+    const scene: any = sceneId ? (game as any).scenes?.get(sceneId) : (game as any).scenes?.current;
     if (!scene) throw new Error(sceneId ? `Scene not found: ${sceneId}` : 'No active scene');
     return scene;
   }
@@ -10576,6 +10707,7 @@ export class FoundryDataAccess {
     x: number;
     y: number;
     animate?: boolean;
+    ignoreWalls?: boolean;
   }): Promise<any> {
     this.validateFoundryState();
 
@@ -10589,33 +10721,59 @@ export class FoundryDataAccess {
     }
 
     try {
-      const scene = (game.scenes as any).current;
+      // The scene the GM is looking at, like the other token tools
+      const scene = (canvas as any)?.scene ?? (game.scenes as any).current;
       if (!scene) {
         throw new Error('No active scene found');
       }
 
       const token = scene.tokens.get(data.tokenId);
       if (!token) {
-        throw new Error(`Token ${data.tokenId} not found in current scene`);
+        throw new Error(`Token ${data.tokenId} not found in scene "${scene.name}"`);
       }
 
-      // Update token position
-      await token.update(
-        {
-          x: data.x,
-          y: data.y,
-        },
-        { animate: data.animate !== false }
-      );
+      const from = { x: token.x, y: token.y };
+      const animate = data.animate !== false;
+      const ignoreWalls = !!data.ignoreWalls;
 
+      if (typeof token.move === 'function') {
+        // Foundry v13+: x/y changes are movements, constrained by walls (and
+        // terrain cost) even for the GM. ignoreWalls lifts both constraints,
+        // for when the GM has already ruled the move legal (e.g. a door the
+        // creature can pass, or a path the wall check gets wrong).
+        await token.move(
+          { x: data.x, y: data.y },
+          {
+            animate,
+            showRuler: false,
+            constrainOptions: { ignoreWalls, ignoreCost: ignoreWalls },
+          }
+        );
+      } else {
+        await token.update({ x: data.x, y: data.y }, { animate });
+      }
+
+      const final = { x: token.x, y: token.y };
+      const reached = final.x === data.x && final.y === data.y;
       this.auditLog('moveToken', data, 'success');
 
       return {
-        success: true,
+        success: reached,
         tokenId: token.id,
         tokenName: token.name,
-        newPosition: { x: data.x, y: data.y },
-        animated: data.animate !== false,
+        from,
+        requestedPosition: { x: data.x, y: data.y },
+        newPosition: final,
+        reachedTarget: reached,
+        ignoredWalls: ignoreWalls,
+        animated: animate,
+        ...(reached
+          ? {}
+          : {
+              note: ignoreWalls
+                ? 'The token did not reach the requested position.'
+                : 'Movement was stopped short, most likely by a wall. If the move is legal, retry with ignoreWalls: true.',
+            }),
       };
     } catch (error) {
       this.auditLog(
@@ -11005,9 +11163,9 @@ export class FoundryDataAccess {
         conditions: conditions.map((condition: any) => ({
           id: condition.id,
           // PF2e stores i18n keys here (e.g. "PF2E.Actor.Dead"); localise them
-          name: (game as any).i18n?.localize(
-            condition.name || condition.label || condition.id
-          ) ?? (condition.name || condition.label || condition.id),
+          name:
+            (game as any).i18n?.localize(condition.name || condition.label || condition.id) ??
+            (condition.name || condition.label || condition.id),
           icon: condition.icon || condition.img,
           description: condition.description || '',
         })),

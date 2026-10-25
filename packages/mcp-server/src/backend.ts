@@ -1954,10 +1954,12 @@ const hasLock = acquireLock();
 
 (async function main() {
   if (!hasLock) {
-    // Another backend is running - wait forever without doing anything
-    // This keeps the process alive so Claude doesn't see an error
-    await new Promise(() => {}); // Never resolves
-    return;
+    // Another backend is running. Exit cleanly: the wrapper that spawned us
+    // keeps retrying and connects to that backend's control port. (The old
+    // "await new Promise(() => {})" never kept Node alive anyway - a pending
+    // promise does not hold the event loop open - so this exited regardless.)
+    console.error('Another backend holds the lock; exiting so the wrapper uses it');
+    process.exit(0);
   }
 
   process.on('exit', releaseLock);

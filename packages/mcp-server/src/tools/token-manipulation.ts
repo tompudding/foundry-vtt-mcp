@@ -24,7 +24,7 @@ export class TokenManipulationTools {
       {
         name: 'move-token',
         description:
-          'Move a token to a new position on the current scene. Can optionally animate the movement.',
+          'Move a token to a new position on the viewed scene. Can optionally animate the movement. Foundry blocks movement through walls, even for the GM; if you have ruled the move legal (enough movement, a passable route), pass ignoreWalls: true to move it directly. Returns where the token actually ended up: reachedTarget false means it was stopped short.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -43,6 +43,12 @@ export class TokenManipulationTools {
             animate: {
               type: 'boolean',
               description: 'Whether to animate the movement (default: false)',
+              default: false,
+            },
+            ignoreWalls: {
+              type: 'boolean',
+              description:
+                'Move straight to the destination, ignoring walls and terrain cost. Use once you have checked the creature can legally make the move.',
               default: false,
             },
           },
@@ -132,7 +138,7 @@ export class TokenManipulationTools {
       {
         name: 'get-token-details',
         description:
-          'Get a token\'s PLACEMENT and appearance only: position, size, rotation, scale, alpha, image, disposition, elevation, and the id/name/type of its linked actor. It does NOT report live game state. For HP, AC, conditions, effects, IWR, speeds, saves or hazard details, use get-token-state instead.',
+          "Get a token's PLACEMENT and appearance only: position, size, rotation, scale, alpha, image, disposition, elevation, and the id/name/type of its linked actor. It does NOT report live game state. For HP, AC, conditions, effects, IWR, speeds, saves or hazard details, use get-token-state instead.",
         inputSchema: {
           type: 'object',
           properties: {
@@ -192,11 +198,12 @@ export class TokenManipulationTools {
       x: z.number(),
       y: z.number(),
       animate: z.boolean().optional().default(false),
+      ignoreWalls: z.boolean().optional().default(false),
     });
 
-    const { tokenId, x, y, animate } = schema.parse(args);
+    const { tokenId, x, y, animate, ignoreWalls } = schema.parse(args);
 
-    this.logger.info('Moving token', { tokenId, x, y, animate });
+    this.logger.info('Moving token', { tokenId, x, y, animate, ignoreWalls });
 
     try {
       const result = await this.foundryClient.query('foundry-mcp-bridge.move-token', {
@@ -204,16 +211,14 @@ export class TokenManipulationTools {
         x,
         y,
         animate,
+        ignoreWalls,
       });
 
-      this.logger.debug('Token moved successfully', { tokenId });
+      this.logger.debug('Token move result', { tokenId, result });
 
-      return {
-        success: true,
-        tokenId,
-        newPosition: { x, y },
-        animated: animate,
-      };
+      // Pass the module's answer through: it reports where the token really
+      // ended up, which differs from the request when a wall stopped it.
+      return result;
     } catch (error) {
       this.logger.error('Failed to move token', error);
       throw new Error(
