@@ -5112,6 +5112,148 @@ export class FoundryDataAccess {
     return { dead: hasDead(), deadMarkedBy: 'bridge' };
   }
 
+  // ---- Adventure module state ----------------------------------------------
+
+  /**
+   * Namespaces adventure-state tools may touch: active modules only, never
+   * Foundry core, the game system, or this bridge's own settings.
+   */
+  private adventureNamespaceAllowed(ns: string): { ok: boolean; reason?: string } {
+    const g: any = game as any;
+    if (!ns) return { ok: false, reason: 'module is required' };
+    if (ns === 'core' || ns === g.system?.id || ns === 'foundry-mcp-bridge') {
+      return { ok: false, reason: `"${ns}" settings are not adventure state` };
+    }
+    const mod = g.modules?.get(ns);
+    if (!mod) return { ok: false, reason: `No module with id "${ns}"` };
+    if (!mod.active) return { ok: false, reason: `Module "${ns}" is not active` };
+    return { ok: true };
+  }
+
+  private worldSettingsFor(ns?: string): any[] {
+    const g: any = game as any;
+    return [...g.settings.settings.values()].filter(
+      (s: any) =>
+        s.scope === 'world' &&
+        (!ns || s.namespace === ns) &&
+        this.adventureNamespaceAllowed(s.namespace).ok
+    );
+  }
+
+  private plainSettingValue(ns: string, key: string): any {
+    const v: any = (game as any).settings.get(ns, key);
+    const obj = v?.toObject ? v.toObject() : v;
+    try {
+      return JSON.parse(JSON.stringify(obj ?? null));
+    } catch (_e) {
+      return String(obj);
+    }
+  }
+
+  /**
+   * Read the world-scope settings an adventure module stores its campaign
+   * tracking in (e.g. pf2e-bastion-of-blasphemies.campaign). With no module,
+   * list active modules that have world settings.
+   */
+  async getAdventureState(data: { module?: string; setting?: string } = {}): Promise<any> {
+    const g: any = game as any;
+    if (!data.module) {
+      const byNs = new Map<string, string[]>();
+      for (const s of this.worldSettingsFor()) {
+        if (!byNs.has(s.namespace)) byNs.set(s.namespace, []);
+        byNs.get(s.namespace)!.push(s.key);
+      }
+      return {
+        modules: [...byNs.entries()].map(([ns, keys]) => ({
+          module: ns,
+          title: g.modules.get(ns)?.title ?? ns,
+          settings: keys,
+        })),
+        note: 'Pass module (and optionally setting) to read values.',
+      };
+    }
+    const allowed = this.adventureNamespaceAllowed(data.module);
+    if (!allowed.ok) return { error: allowed.reason };
+    const settings = this.worldSettingsFor(data.module).filter(
+      (s: any) => !data.setting || s.key === data.setting
+    );
+    if (!settings.length) {
+      return {
+        error: data.setting
+          ? `No world setting "${data.setting}" in ${data.module}`
+          : `${data.module} has no world settings`,
+      };
+    }
+    const values: Record<string, any> = {};
+    for (const s of settings) values[s.key] = this.plainSettingValue(s.namespace, s.key);
+    return { module: data.module, title: g.modules.get(data.module)?.title ?? data.module, values };
+  }
+
+  /**
+   * Change fields inside an adventure module's world setting. Each change
+   * names a dot path that must ALREADY exist and hold a primitive of the same
+   * type as the new value, so the tracker's structure cannot be corrupted.
+   * Saved with game.settings.set, so the module's own change handlers run
+   * exactly as when its UI saves.
+   */
+  async setAdventureState(data: {
+    module: string;
+    setting: string;
+    path?: string;
+    value?: boolean | number | string;
+    changes?: Array<{ path: string; value: boolean | number | string }>;
+  }): Promise<any> {
+    const g: any = game as any;
+    const allowed = this.adventureNamespaceAllowed(data.module);
+    if (!allowed.ok) return { error: allowed.reason };
+    const reg = this.worldSettingsFor(data.module).find((s: any) => s.key === data.setting);
+    if (!reg) return { error: `No world setting "${data.setting}" in ${data.module}` };
+
+    const changes = data.changes?.length
+      ? data.changes
+      : data.path !== undefined && data.value !== undefined
+        ? [{ path: data.path, value: data.value }]
+        : [];
+    if (!changes.length) return { error: 'Provide path + value, or changes: [{path, value}]' };
+
+    const current = this.plainSettingValue(data.module, data.setting);
+    if (current === null || typeof current !== 'object') {
+      return {
+        error: `${data.module}.${data.setting} is not an object setting; only fields inside object settings can be changed`,
+      };
+    }
+    const fu: any = (foundry as any).utils;
+    const applied: any[] = [];
+    for (const c of changes) {
+      const old = fu.getProperty(current, c.path);
+      if (old === undefined) {
+        const parentPath = c.path.split('.').slice(0, -1).join('.');
+        const parent = parentPath ? fu.getProperty(current, parentPath) : current;
+        return {
+          error: `No field "${c.path}" in ${data.module}.${data.setting}`,
+          ...(parent && typeof parent === 'object' ? { fieldsAtParent: Object.keys(parent) } : {}),
+          appliedNothing: true,
+        };
+      }
+      if (old === null || typeof old === 'object') {
+        return {
+          error: `"${c.path}" is not a single value (it holds ${old === null ? 'null' : 'an object'}); name a field inside it`,
+          appliedNothing: true,
+        };
+      }
+      if (typeof old !== typeof c.value) {
+        return {
+          error: `"${c.path}" is a ${typeof old}; got a ${typeof c.value}`,
+          appliedNothing: true,
+        };
+      }
+      fu.setProperty(current, c.path, c.value);
+      applied.push({ path: c.path, before: old, after: c.value });
+    }
+    await g.settings.set(data.module, data.setting, current);
+    return { module: data.module, setting: data.setting, changed: applied };
+  }
+
   // ---- Macros -------------------------------------------------------------
 
   /**

@@ -218,6 +218,15 @@ export class ModuleSettings {
       default: false,
     });
 
+    game.settings.register(this.moduleId, 'allowAdventureStateWrites', {
+      name: 'Allow Adventure State Changes',
+      hint: "Permit the MCP client to change fields in adventure modules' campaign trackers (e.g. research points or area flags), stored as world settings. Only existing fields can be changed, and only to a value of the same type. Foundry core, game system and bridge settings are never touched.",
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: false,
+    });
+
     game.settings.register(this.moduleId, 'allowMacroExecution', {
       name: 'Allow Macro Execution',
       hint: 'Permit the MCP client to run existing macros (world or compendium), e.g. ones an adventure journal tells the GM to click. Macros run with full GM permissions and can change anything, so only enable this if you trust the macros in your world. The client cannot write new macro code.',

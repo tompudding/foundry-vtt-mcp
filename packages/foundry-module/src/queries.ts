@@ -37,6 +37,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.applyTokenDamage`] = this.handleApplyTokenDamage.bind(this);
     CONFIG.queries[`${modulePrefix}.getCombatTracker`] = this.handleGetCombatTracker.bind(this);
     CONFIG.queries[`${modulePrefix}.getMacro`] = this.handleGetMacro.bind(this);
+    CONFIG.queries[`${modulePrefix}.getAdventureState`] = this.handleGetAdventureState.bind(this);
+    CONFIG.queries[`${modulePrefix}.setAdventureState`] = this.handleSetAdventureState.bind(this);
     CONFIG.queries[`${modulePrefix}.executeMacro`] = this.handleExecuteMacro.bind(this);
     CONFIG.queries[`${modulePrefix}.advanceCombat`] = this.handleAdvanceCombat.bind(this);
     CONFIG.queries[`${modulePrefix}.getSceneWalls`] = this.handleGetSceneWalls.bind(this);
@@ -398,6 +400,45 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to apply damage: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleGetAdventureState(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.getAdventureState(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to get adventure state: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleSetAdventureState(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      let allowed = false;
+      try {
+        allowed = !!(game as any).settings.get('foundry-mcp-bridge', 'allowAdventureStateWrites');
+      } catch (_e) {
+        allowed = false;
+      }
+      if (!allowed) {
+        return {
+          error:
+            'Adventure state changes are disabled. Enable "Allow Adventure State Changes" in the Foundry MCP Bridge module settings.',
+          success: false,
+        };
+      }
+      this.dataAccess.validateFoundryState();
+      return await this.dataAccess.setAdventureState(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to set adventure state: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

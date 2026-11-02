@@ -44,18 +44,42 @@ export class SceneTools {
       {
         name: 'get-token-state',
         description:
-          'Get LIVE state (HP, AC, hardness, conditions with badge values, effects, immunities/weaknesses/resistances, speeds, saves, skills, region membership, hazard details) of tokens. This is the tool for anything mechanical; get-token-details only reports placement and appearance on the active scene, read from each token\'s own synthetic actor — correct for unlinked tokens whose conditions differ from the world actor. Identify one token by tokenId, tokenName, or nearest x/y pixel coordinates, or pass all: true for every token. For HAZARDS the response includes a hazard block with the Disable entry, routine, reset, description, stealth DC and hardness. Fields are null when unavailable/not applicable and empty when genuinely empty. Pass detail: \'full\' for a complete statblock readout (strikes, skills, senses, spellcasting, feats, inventory, GM notes) when you need to run the creature rather than just track its HP. Pass selected: true for the token(s) the GM currently has selected on the canvas, or targeted: true for the GM\'s targeted token(s).',
+          "Get LIVE state (HP, AC, hardness, conditions with badge values, effects, immunities/weaknesses/resistances, speeds, saves, skills, region membership, hazard details) of tokens. This is the tool for anything mechanical; get-token-details only reports placement and appearance on the active scene, read from each token's own synthetic actor — correct for unlinked tokens whose conditions differ from the world actor. Identify one token by tokenId, tokenName, or nearest x/y pixel coordinates, or pass all: true for every token. For HAZARDS the response includes a hazard block with the Disable entry, routine, reset, description, stealth DC and hardness. Fields are null when unavailable/not applicable and empty when genuinely empty. Pass detail: 'full' for a complete statblock readout (strikes, skills, senses, spellcasting, feats, inventory, GM notes) when you need to run the creature rather than just track its HP. Pass selected: true for the token(s) the GM currently has selected on the canvas, or targeted: true for the GM's targeted token(s).",
         inputSchema: {
           type: 'object',
           properties: {
             tokenId: { type: 'string', description: 'Exact token document id' },
             tokenName: { type: 'string', description: 'Token name (exact, then substring match)' },
-            x: { type: 'number', description: 'Scene x coordinate; pairs with y for nearest-token lookup' },
-            y: { type: 'number', description: 'Scene y coordinate; pairs with x for nearest-token lookup' },
-            all: { type: 'boolean', description: 'Return state of ALL tokens on the scene', default: false },
-            detail: { type: 'string', enum: ['basic', 'full'], description: "Level of detail. 'basic' (default) returns HP, AC, conditions, IWR, speeds and saves — small enough to poll every round. 'full' adds strikes with attack bonuses and damage, skills, ability modifiers, senses, spellcasting DCs and spell lists, feats and special actions, inventory, shield/hardness, class DC, resources, initiative, languages/rarity, and GM-facing bestiary notes (tactics).", default: 'basic' },
-            selected: { type: 'boolean', description: 'Use the token(s) currently SELECTED on the GM canvas', default: false },
-            targeted: { type: 'boolean', description: 'Use the token(s) currently TARGETED by the GM user', default: false },
+            x: {
+              type: 'number',
+              description: 'Scene x coordinate; pairs with y for nearest-token lookup',
+            },
+            y: {
+              type: 'number',
+              description: 'Scene y coordinate; pairs with x for nearest-token lookup',
+            },
+            all: {
+              type: 'boolean',
+              description: 'Return state of ALL tokens on the scene',
+              default: false,
+            },
+            detail: {
+              type: 'string',
+              enum: ['basic', 'full'],
+              description:
+                "Level of detail. 'basic' (default) returns HP, AC, conditions, IWR, speeds and saves — small enough to poll every round. 'full' adds strikes with attack bonuses and damage, skills, ability modifiers, senses, spellcasting DCs and spell lists, feats and special actions, inventory, shield/hardness, class DC, resources, initiative, languages/rarity, and GM-facing bestiary notes (tactics).",
+              default: 'basic',
+            },
+            selected: {
+              type: 'boolean',
+              description: 'Use the token(s) currently SELECTED on the GM canvas',
+              default: false,
+            },
+            targeted: {
+              type: 'boolean',
+              description: 'Use the token(s) currently TARGETED by the GM user',
+              default: false,
+            },
           },
         },
       },
@@ -68,11 +92,29 @@ export class SceneTools {
           properties: {
             tokenId: { type: 'string', description: 'Origin token document id' },
             tokenName: { type: 'string', description: 'Origin token name (exact, then substring)' },
-            selected: { type: 'boolean', description: 'Use the single token selected on the GM canvas as origin', default: false },
-            targeted: { type: 'boolean', description: 'Use the single token targeted by the GM as origin', default: false },
-            rangeFeet: { type: 'number', description: 'If set, adds an inRange flag per token for this range' },
-            reachFeet: { type: 'number', description: 'Measure as a reach attack of this reach (PF2e reach diagonal rule)' },
-            includeHidden: { type: 'boolean', description: 'Include hidden tokens in results', default: false },
+            selected: {
+              type: 'boolean',
+              description: 'Use the single token selected on the GM canvas as origin',
+              default: false,
+            },
+            targeted: {
+              type: 'boolean',
+              description: 'Use the single token targeted by the GM as origin',
+              default: false,
+            },
+            rangeFeet: {
+              type: 'number',
+              description: 'If set, adds an inRange flag per token for this range',
+            },
+            reachFeet: {
+              type: 'number',
+              description: 'Measure as a reach attack of this reach (PF2e reach diagonal rule)',
+            },
+            includeHidden: {
+              type: 'boolean',
+              description: 'Include hidden tokens in results',
+              default: false,
+            },
           },
         },
       },
@@ -83,12 +125,28 @@ export class SceneTools {
         inputSchema: {
           type: 'object',
           properties: {
-            selected: { type: 'boolean', description: 'Only items on the selected token(s)', default: false },
+            selected: {
+              type: 'boolean',
+              description: 'Only items on the selected token(s)',
+              default: false,
+            },
             tokenId: { type: 'string' },
             tokenName: { type: 'string' },
-            allScenes: { type: 'boolean', description: 'Scan every scene and world actor', default: false },
-            includePlayerOwned: { type: 'boolean', description: 'Include player-owned actors', default: false },
-            onlyMystified: { type: 'boolean', description: 'Only currently mystified items', default: false },
+            allScenes: {
+              type: 'boolean',
+              description: 'Scan every scene and world actor',
+              default: false,
+            },
+            includePlayerOwned: {
+              type: 'boolean',
+              description: 'Include player-owned actors',
+              default: false,
+            },
+            onlyMystified: {
+              type: 'boolean',
+              description: 'Only currently mystified items',
+              default: false,
+            },
           },
         },
       },
@@ -100,10 +158,21 @@ export class SceneTools {
           type: 'object',
           properties: {
             action: { type: 'string', enum: ['identify', 'mystify', 'mystify-all'] },
-            itemUuid: { type: 'string', description: 'Item uuid from get-item-identification (identify/mystify)' },
-            allScenes: { type: 'boolean', description: 'mystify-all: cover every scene and world actor', default: false },
+            itemUuid: {
+              type: 'string',
+              description: 'Item uuid from get-item-identification (identify/mystify)',
+            },
+            allScenes: {
+              type: 'boolean',
+              description: 'mystify-all: cover every scene and world actor',
+              default: false,
+            },
             includePlayerOwned: { type: 'boolean', default: false },
-            postChat: { type: 'boolean', description: 'Post a reveal chat card on identify', default: true },
+            postChat: {
+              type: 'boolean',
+              description: 'Post a reveal chat card on identify',
+              default: true,
+            },
           },
           required: ['action'],
         },
@@ -117,18 +186,106 @@ export class SceneTools {
           properties: {
             tokenId: { type: 'string', description: 'Target token document id' },
             tokenName: { type: 'string', description: 'Target token name (exact, then substring)' },
-            selected: { type: 'boolean', description: 'Apply to the selected token(s)', default: false },
-            targeted: { type: 'boolean', description: 'Apply to the targeted token(s)', default: false },
-            amount: { type: 'number', description: 'Amount of damage (or healing if healing: true); positive number' },
+            selected: {
+              type: 'boolean',
+              description: 'Apply to the selected token(s)',
+              default: false,
+            },
+            targeted: {
+              type: 'boolean',
+              description: 'Apply to the targeted token(s)',
+              default: false,
+            },
+            amount: {
+              type: 'number',
+              description: 'Amount of damage (or healing if healing: true); positive number',
+            },
             healing: { type: 'boolean', description: 'Heal instead of damage', default: false },
-            skipIWR: { type: 'boolean', description: 'Apply the number as-is, ignoring resistances/weaknesses', default: false },
-            raw: { type: 'boolean', description: 'Apply exactly this amount: no weaknesses, resistances, immunities, hardness or shield block. Still recorded in chat.', default: false },
-            reason: { type: 'string', description: 'Short note shown on the chat card, e.g. persistent fire or falling damage' },
-            damageType: { type: 'string', description: 'Damage type: slashing, piercing, bludgeoning, fire, cold, electricity, acid, sonic, vitality, void, force, mental, poison, bleed, spirit. REQUIRED for weaknesses/resistances/immunities to apply - untyped damage bypasses IWR entirely.' },
-            materials: { type: 'array', items: { type: 'string' }, description: 'Material effects on the damage, e.g. cold-iron, silver, adamantine. Needed for creatures with material-specific weaknesses.' },
-            instances: { type: 'array', description: 'For mixed damage, one entry per instance, e.g. [{amount:7,damageType:"slashing",materials:["cold-iron"]},{amount:3,damageType:"fire"}]. Overrides amount/damageType.', items: { type: 'object', properties: { amount: { type: 'number' }, damageType: { type: 'string' }, materials: { type: 'array', items: { type: 'string' } } } } },
+            skipIWR: {
+              type: 'boolean',
+              description: 'Apply the number as-is, ignoring resistances/weaknesses',
+              default: false,
+            },
+            raw: {
+              type: 'boolean',
+              description:
+                'Apply exactly this amount: no weaknesses, resistances, immunities, hardness or shield block. Still recorded in chat.',
+              default: false,
+            },
+            reason: {
+              type: 'string',
+              description:
+                'Short note shown on the chat card, e.g. persistent fire or falling damage',
+            },
+            damageType: {
+              type: 'string',
+              description:
+                'Damage type: slashing, piercing, bludgeoning, fire, cold, electricity, acid, sonic, vitality, void, force, mental, poison, bleed, spirit. REQUIRED for weaknesses/resistances/immunities to apply - untyped damage bypasses IWR entirely.',
+            },
+            materials: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Material effects on the damage, e.g. cold-iron, silver, adamantine. Needed for creatures with material-specific weaknesses.',
+            },
+            instances: {
+              type: 'array',
+              description:
+                'For mixed damage, one entry per instance, e.g. [{amount:7,damageType:"slashing",materials:["cold-iron"]},{amount:3,damageType:"fire"}]. Overrides amount/damageType.',
+              items: {
+                type: 'object',
+                properties: {
+                  amount: { type: 'number' },
+                  damageType: { type: 'string' },
+                  materials: { type: 'array', items: { type: 'string' } },
+                },
+              },
+            },
           },
           required: ['amount'],
+        },
+      },
+      {
+        name: 'get-adventure-state',
+        description:
+          'Read the campaign tracking an adventure module keeps in its world settings - the data behind module UIs such as a Campaign Manager (e.g. module pf2e-bastion-of-blasphemies, setting campaign: phantoms rescued, area toggles, research points, special items). With no module, lists active modules that have world settings. Consult it whenever the adventure text refers to tracked progress.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            module: { type: 'string', description: 'Module id, e.g. pf2e-bastion-of-blasphemies' },
+            setting: {
+              type: 'string',
+              description:
+                "One setting key, e.g. campaign; omit for all of the module's world settings",
+            },
+          },
+        },
+      },
+      {
+        name: 'set-adventure-state',
+        description:
+          'Change fields in an adventure module\'s campaign tracker (see get-adventure-state), exactly as its own UI would save them. Name each field by dot path from the setting root, e.g. research.curse.points or areas.shore.phantoms.dast.rescued. Only existing fields can be changed, and only to a value of the same type (boolean/number/string); a bad path returns the valid field names. Use changes for several fields at once. Requires the module "Allow Adventure State Changes" setting.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            module: { type: 'string', description: 'Module id' },
+            setting: { type: 'string', description: 'Setting key, e.g. campaign' },
+            path: { type: 'string', description: 'Dot path of one field to change' },
+            value: { type: ['boolean', 'number', 'string'], description: 'New value for path' },
+            changes: {
+              type: 'array',
+              description: 'Several changes at once: [{path, value}]',
+              items: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string' },
+                  value: { type: ['boolean', 'number', 'string'] },
+                },
+                required: ['path', 'value'],
+              },
+            },
+          },
+          required: ['module', 'setting'],
         },
       },
       {
@@ -138,7 +295,11 @@ export class SceneTools {
         inputSchema: {
           type: 'object',
           properties: {
-            macro: { type: 'string', description: 'The macro: a journal link pasted as-is (@UUID[Macro.abc]{Name}), a uuid (Macro.abc or Compendium.pack.Macro.abc), a world macro id, or a name' },
+            macro: {
+              type: 'string',
+              description:
+                'The macro: a journal link pasted as-is (@UUID[Macro.abc]{Name}), a uuid (Macro.abc or Compendium.pack.Macro.abc), a world macro id, or a name',
+            },
           },
         },
       },
@@ -149,10 +310,21 @@ export class SceneTools {
         inputSchema: {
           type: 'object',
           properties: {
-            macro: { type: 'string', description: 'The macro: a journal link pasted as-is (@UUID[Macro.abc]{Name}), a uuid (Macro.abc or Compendium.pack.Macro.abc), a world macro id, or a name' },
-            tokenId: { type: 'string', description: 'Token the macro should act as (sets its token/actor variables)' },
+            macro: {
+              type: 'string',
+              description:
+                'The macro: a journal link pasted as-is (@UUID[Macro.abc]{Name}), a uuid (Macro.abc or Compendium.pack.Macro.abc), a world macro id, or a name',
+            },
+            tokenId: {
+              type: 'string',
+              description: 'Token the macro should act as (sets its token/actor variables)',
+            },
             tokenName: { type: 'string', description: 'Token name, alternative to tokenId' },
-            args: { type: 'object', description: 'Extra named values passed into the macro scope, for macros that expect them' },
+            args: {
+              type: 'object',
+              description:
+                'Extra named values passed into the macro scope, for macros that expect them',
+            },
           },
           required: ['macro'],
         },
@@ -164,7 +336,10 @@ export class SceneTools {
         inputSchema: {
           type: 'object',
           properties: {
-            combatId: { type: 'string', description: 'A specific combat id; defaults to the combat on the viewed scene' },
+            combatId: {
+              type: 'string',
+              description: 'A specific combat id; defaults to the combat on the viewed scene',
+            },
           },
         },
       },
@@ -175,9 +350,20 @@ export class SceneTools {
         inputSchema: {
           type: 'object',
           properties: {
-            action: { type: 'string', enum: ['next-turn', 'previous-turn', 'next-round', 'previous-round', 'start'], default: 'next-turn' },
-            expectedCurrent: { type: 'string', description: 'combatantId or name of the combatant whose turn is ending; refuses if it is not their turn' },
-            combatId: { type: 'string', description: 'A specific combat id; defaults to the combat on the viewed scene' },
+            action: {
+              type: 'string',
+              enum: ['next-turn', 'previous-turn', 'next-round', 'previous-round', 'start'],
+              default: 'next-turn',
+            },
+            expectedCurrent: {
+              type: 'string',
+              description:
+                'combatantId or name of the combatant whose turn is ending; refuses if it is not their turn',
+            },
+            combatId: {
+              type: 'string',
+              description: 'A specific combat id; defaults to the combat on the viewed scene',
+            },
           },
         },
       },
@@ -188,10 +374,25 @@ export class SceneTools {
         inputSchema: {
           type: 'object',
           properties: {
-            doorsOnly: { type: 'boolean', description: 'Return only doors and secret doors', default: false },
-            blocksSight: { type: 'boolean', description: 'Filter to walls that DO (true) or do NOT (false) block sight. Open doors never block sight.' },
-            blocksMovement: { type: 'boolean', description: 'Filter to walls that DO (true) or do NOT (false) block movement.' },
-            includeInvisible: { type: 'boolean', description: 'Include invisible walls (block movement, not sight)', default: true },
+            doorsOnly: {
+              type: 'boolean',
+              description: 'Return only doors and secret doors',
+              default: false,
+            },
+            blocksSight: {
+              type: 'boolean',
+              description:
+                'Filter to walls that DO (true) or do NOT (false) block sight. Open doors never block sight.',
+            },
+            blocksMovement: {
+              type: 'boolean',
+              description: 'Filter to walls that DO (true) or do NOT (false) block movement.',
+            },
+            includeInvisible: {
+              type: 'boolean',
+              description: 'Include invisible walls (block movement, not sight)',
+              default: true,
+            },
           },
         },
       },
@@ -204,12 +405,30 @@ export class SceneTools {
           properties: {
             sourceTokenId: { type: 'string' },
             sourceTokenName: { type: 'string' },
-            sourceSelected: { type: 'boolean', description: 'Use the selected token as the source', default: false },
+            sourceSelected: {
+              type: 'boolean',
+              description: 'Use the selected token as the source',
+              default: false,
+            },
             targetTokenId: { type: 'string' },
             targetTokenName: { type: 'string' },
-            targetTargeted: { type: 'boolean', description: 'Use the targeted token as the target', default: false },
-            crossLevelSight: { type: 'boolean', description: 'For tokens on different levels, report the raw 2-D verdict instead of blocked (use for balconies/open galleries)', default: false },
-            ignoreLevels: { type: 'boolean', description: 'Disable multi-level filtering entirely and test against every sight-blocking wall in the scene', default: false },
+            targetTargeted: {
+              type: 'boolean',
+              description: 'Use the targeted token as the target',
+              default: false,
+            },
+            crossLevelSight: {
+              type: 'boolean',
+              description:
+                'For tokens on different levels, report the raw 2-D verdict instead of blocked (use for balconies/open galleries)',
+              default: false,
+            },
+            ignoreLevels: {
+              type: 'boolean',
+              description:
+                'Disable multi-level filtering entirely and test against every sight-blocking wall in the scene',
+              default: false,
+            },
           },
         },
       },
@@ -230,8 +449,17 @@ export class SceneTools {
             hours: { type: 'number', description: 'Hours to advance (negative rewinds)' },
             minutes: { type: 'number', description: 'Minutes to advance (negative rewinds)' },
             seconds: { type: 'number', description: 'Seconds to advance (negative rewinds)' },
-            setTimeOfDay: { type: 'string', description: 'Absolute time of day, e.g. "06:00" for dawn. Moves forward to the next occurrence.' },
-            nextDay: { type: 'boolean', description: 'With setTimeOfDay, force the following day even if the time is still ahead today', default: false },
+            setTimeOfDay: {
+              type: 'string',
+              description:
+                'Absolute time of day, e.g. "06:00" for dawn. Moves forward to the next occurrence.',
+            },
+            nextDay: {
+              type: 'boolean',
+              description:
+                'With setTimeOfDay, force the following day even if the time is still ahead today',
+              default: false,
+            },
           },
         },
       },
@@ -243,9 +471,21 @@ export class SceneTools {
           type: 'object',
           properties: {
             image: { type: 'string', description: 'Image path or URL to display' },
-            title: { type: 'string', description: 'Caption shown above the image; defaults to the filename' },
-            uuid: { type: 'string', description: 'Optional document uuid the image belongs to (e.g. an actor uuid, so the popout links back to it)' },
-            showToGM: { type: 'boolean', description: "Also open the image on the GM's own screen, so the GM sees what the players see", default: true },
+            title: {
+              type: 'string',
+              description: 'Caption shown above the image; defaults to the filename',
+            },
+            uuid: {
+              type: 'string',
+              description:
+                'Optional document uuid the image belongs to (e.g. an actor uuid, so the popout links back to it)',
+            },
+            showToGM: {
+              type: 'boolean',
+              description:
+                "Also open the image on the GM's own screen, so the GM sees what the players see",
+              default: true,
+            },
           },
           required: ['image'],
         },
@@ -253,7 +493,7 @@ export class SceneTools {
       {
         name: 'get-scene-regions',
         description:
-          'List the regions on the active scene with their shape geometry (pixels and grid squares), elevation band, visibility, behaviors, and the tokens Foundry currently considers INSIDE each one. Membership comes from Foundry\'s own bookkeeping, so it matches what the GM sees highlighted on the canvas. Use this to confirm which creatures an area effect covers. Filter with regionId or regionName.',
+          "List the regions on the active scene with their shape geometry (pixels and grid squares), elevation band, visibility, behaviors, and the tokens Foundry currently considers INSIDE each one. Membership comes from Foundry's own bookkeeping, so it matches what the GM sees highlighted on the canvas. Use this to confirm which creatures an area effect covers. Filter with regionId or regionName.",
         inputSchema: {
           type: 'object',
           properties: {
@@ -265,7 +505,7 @@ export class SceneTools {
       {
         name: 'test-token-in-region',
         description:
-          'Test whether a token is inside a region - the direct question for adjudicating area effects. Checks the token\'s centre AND its four corners, so a Large creature clipping the edge is reported as partial. Identify the token by tokenId, tokenName, selected or targeted, and the region by regionId or regionName (omit to test against every region). inside is the 2-D geometric answer; if the region has an elevation band the token is outside, inside stays true and outsideElevationBand is set so the reason is visible. foundryMembership reports Foundry\'s own set for comparison.',
+          "Test whether a token is inside a region - the direct question for adjudicating area effects. Checks the token's centre AND its four corners, so a Large creature clipping the edge is reported as partial. Identify the token by tokenId, tokenName, selected or targeted, and the region by regionId or regionName (omit to test against every region). inside is the 2-D geometric answer; if the region has an elevation band the token is outside, inside stays true and outsideElevationBand is set so the reason is visible. foundryMembership reports Foundry's own set for comparison.",
         inputSchema: {
           type: 'object',
           properties: {
@@ -293,10 +533,29 @@ export class SceneTools {
               required: ['x', 'y'],
             },
             tokenId: { type: 'string', description: 'Act on the door nearest this token' },
-            state: { type: 'string', enum: ['open', 'closed', 'locked'], description: 'Desired door state' },
-            reveal: { type: 'boolean', description: 'Convert a secret door into a normal one (discovery). Sugar for doorType: "door".', default: false },
-            doorType: { type: 'string', enum: ['door', 'secret'], description: 'Set the door type in either direction: "door" reveals a secret door, "secret" hides a normal one again (e.g. re-hiding a door the party never found). Omit to leave the type alone.' },
-            playSound: { type: 'boolean', description: 'Play the normal door sound (best effort; suppression depends on Foundry version)', default: true },
+            state: {
+              type: 'string',
+              enum: ['open', 'closed', 'locked'],
+              description: 'Desired door state',
+            },
+            reveal: {
+              type: 'boolean',
+              description:
+                'Convert a secret door into a normal one (discovery). Sugar for doorType: "door".',
+              default: false,
+            },
+            doorType: {
+              type: 'string',
+              enum: ['door', 'secret'],
+              description:
+                'Set the door type in either direction: "door" reveals a secret door, "secret" hides a normal one again (e.g. re-hiding a door the party never found). Omit to leave the type alone.',
+            },
+            playSound: {
+              type: 'boolean',
+              description:
+                'Play the normal door sound (best effort; suppression depends on Foundry version)',
+              default: true,
+            },
             sceneId: { type: 'string', description: 'Scene id; defaults to the active scene' },
           },
           required: ['state'],
@@ -484,13 +743,51 @@ export class SceneTools {
     }
   }
 
+  async handleGetAdventureState(args: any): Promise<any> {
+    const params = z
+      .object({ module: z.string().optional(), setting: z.string().optional() })
+      .parse(args ?? {});
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.getAdventureState', params);
+    } catch (error) {
+      this.logger.error('Failed to get adventure state', error);
+      throw new Error(
+        `Failed to get adventure state: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  async handleSetAdventureState(args: any): Promise<any> {
+    const primitive = z.union([z.boolean(), z.number(), z.string()]);
+    const params = z
+      .object({
+        module: z.string(),
+        setting: z.string(),
+        path: z.string().optional(),
+        value: primitive.optional(),
+        changes: z.array(z.object({ path: z.string(), value: primitive })).optional(),
+      })
+      .parse(args ?? {});
+    this.logger.info('Setting adventure state', params);
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.setAdventureState', params);
+    } catch (error) {
+      this.logger.error('Failed to set adventure state', error);
+      throw new Error(
+        `Failed to set adventure state: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
   async handleGetMacro(args: any): Promise<any> {
     const params = z.object({ macro: z.string().optional() }).parse(args ?? {});
     try {
       return await this.foundryClient.query('foundry-mcp-bridge.getMacro', params);
     } catch (error) {
       this.logger.error('Failed to get macro', error);
-      throw new Error(`Failed to get macro: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to get macro: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -508,7 +805,9 @@ export class SceneTools {
       return await this.foundryClient.query('foundry-mcp-bridge.executeMacro', params);
     } catch (error) {
       this.logger.error('Failed to execute macro', error);
-      throw new Error(`Failed to execute macro: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to execute macro: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -527,7 +826,9 @@ export class SceneTools {
   async handleAdvanceCombat(args: any): Promise<any> {
     const params = z
       .object({
-        action: z.enum(['next-turn', 'previous-turn', 'next-round', 'previous-round', 'start']).default('next-turn'),
+        action: z
+          .enum(['next-turn', 'previous-turn', 'next-round', 'previous-round', 'start'])
+          .default('next-turn'),
         expectedCurrent: z.string().optional(),
         combatId: z.string().optional(),
       })

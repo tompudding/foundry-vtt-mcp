@@ -1612,6 +1612,16 @@ async function startBackend(): Promise<void> {
 
                   break;
 
+                case 'get-adventure-state':
+                  result = await sceneTools.handleGetAdventureState(args);
+
+                  break;
+
+                case 'set-adventure-state':
+                  result = await sceneTools.handleSetAdventureState(args);
+
+                  break;
+
                 case 'get-macro':
                   result = await sceneTools.handleGetMacro(args);
 
