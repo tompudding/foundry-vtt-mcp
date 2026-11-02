@@ -34,7 +34,7 @@ export class PlaylistTools {
       {
         name: 'manage-playlists',
         description:
-          'Create, update, delete, or describe playlists. create: name (+mode/fade/description/sorting/folder/color) and optional sounds [{path, name?, volume?, repeat?, fade?}]. update: playlist identifier + fields and/or sounds to patch (matched by exact id or unique path/name within the playlist). delete: playlist identifier matched by exact id or name only (never partial). describe: no identifier lists all playlists; with identifier returns the full playlist with all sounds.',
+          'Create, update, delete, or describe playlists. describe with no playlist lists every playlist plus nowPlaying (each playlist with sounds currently playing, and which sounds) - use it to find what is on. create: name (+mode/fade/description/sorting/folder/color) and optional sounds [{path, name?, volume?, repeat?, fade?}]. update: playlist identifier + fields and/or sounds to patch (matched by exact id or unique path/name within the playlist). delete: playlist identifier matched by exact id or name only (never partial). describe: no identifier lists all playlists; with identifier returns the full playlist with all sounds.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -51,7 +51,8 @@ export class PlaylistTools {
             name: { type: 'string', description: 'Playlist name (create) or new name (update)' },
             mode: {
               type: 'number',
-              description: 'Playback mode: 0 sequential, 1 shuffle, 2 soundboard',
+              description:
+                'Playback mode: -1 soundboard only (tracks played individually), 0 sequential, 1 shuffle, 2 simultaneous',
             },
             fade: { type: 'number', description: 'Crossfade duration in ms' },
             description: { type: 'string', description: 'Playlist description' },
@@ -95,14 +96,17 @@ export class PlaylistTools {
       {
         name: 'control-playlist',
         description:
-          'Playback control for playlists and their sounds: play (playAll), stop (stopAll), cycle-mode (sequential -> shuffle -> soundboard), play-sound, stop-sound. Playlist and sound accept ids or unique names.',
+          'Playback control for playlists and their sounds: play (playAll - the whole playlist in its mode), stop (stopAll), cycle-mode (cycles the playback mode), play-sound (one track), stop-sound, and stop-all (stop all audio from every playlist; needs no playlist). Playlists in soundboard-only mode (mode -1, see modeLabel from describe) cannot be played as a whole - use play-sound for one of their tracks. Playlist and sound accept ids or unique names. Music is heard by the players, so pick it to suit the scene.',
         inputSchema: {
           type: 'object',
           properties: {
-            playlist: { type: 'string', description: 'Playlist id or unique name' },
+            playlist: {
+              type: 'string',
+              description: 'Playlist id or unique name (not needed for stop-all)',
+            },
             command: {
               type: 'string',
-              enum: ['play', 'stop', 'cycle-mode', 'play-sound', 'stop-sound'],
+              enum: ['play', 'stop', 'cycle-mode', 'play-sound', 'stop-sound', 'stop-all'],
               description: 'Playback command',
             },
             sound: {
@@ -111,7 +115,7 @@ export class PlaylistTools {
                 'Sound id or unique name within the playlist (play-sound / stop-sound only)',
             },
           },
-          required: ['playlist', 'command'],
+          required: ['command'],
         },
       },
     ];
@@ -147,11 +151,14 @@ export class PlaylistTools {
 
   async handleControlPlaylist(args: any): Promise<any> {
     const schema = z.object({
-      playlist: z.string().min(1),
-      command: z.enum(['play', 'stop', 'cycle-mode', 'play-sound', 'stop-sound']),
+      playlist: z.string().min(1).optional(),
+      command: z.enum(['play', 'stop', 'cycle-mode', 'play-sound', 'stop-sound', 'stop-all']),
       sound: z.string().optional(),
     });
     const parsed = schema.parse(args);
+    if (parsed.command !== 'stop-all' && !parsed.playlist) {
+      throw new Error(`command ${parsed.command} requires "playlist"`);
+    }
     if ((parsed.command === 'play-sound' || parsed.command === 'stop-sound') && !parsed.sound) {
       throw new Error(`command ${parsed.command} requires "sound"`);
     }

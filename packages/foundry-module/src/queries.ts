@@ -48,8 +48,10 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.setWorldTime`] = this.handleSetWorldTime.bind(this);
     CONFIG.queries[`${modulePrefix}.showImageToPlayers`] = this.handleShowImageToPlayers.bind(this);
     CONFIG.queries[`${modulePrefix}.getLineOfSight`] = this.handleGetLineOfSight.bind(this);
-    CONFIG.queries[`${modulePrefix}.getItemIdentification`] = this.handleGetItemIdentification.bind(this);
-    CONFIG.queries[`${modulePrefix}.setItemIdentification`] = this.handleSetItemIdentification.bind(this);
+    CONFIG.queries[`${modulePrefix}.getItemIdentification`] =
+      this.handleGetItemIdentification.bind(this);
+    CONFIG.queries[`${modulePrefix}.setItemIdentification`] =
+      this.handleSetItemIdentification.bind(this);
 
     // Compendium queries
     CONFIG.queries[`${modulePrefix}.searchCompendium`] = this.handleSearchCompendium.bind(this);
@@ -357,7 +359,8 @@ export class QueryHandlers {
       }
       if (!allowed) {
         return {
-          error: 'Identification writes are disabled. Enable "Allow Identification Writes" in the Foundry MCP Bridge module settings.',
+          error:
+            'Identification writes are disabled. Enable "Allow Identification Writes" in the Foundry MCP Bridge module settings.',
           success: false,
         };
       }
@@ -385,7 +388,8 @@ export class QueryHandlers {
       }
       if (!allowed) {
         return {
-          error: 'Combat writes are disabled. Enable "Allow Combat Writes" in the Foundry MCP Bridge module settings.',
+          error:
+            'Combat writes are disabled. Enable "Allow Combat Writes" in the Foundry MCP Bridge module settings.',
           success: false,
         };
       }
@@ -405,7 +409,9 @@ export class QueryHandlers {
       this.dataAccess.validateFoundryState();
       return await this.dataAccess.getMacro(data ?? {});
     } catch (error) {
-      throw new Error(`Failed to get macro: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to get macro: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -421,14 +427,17 @@ export class QueryHandlers {
       }
       if (!allowed) {
         return {
-          error: 'Macro execution is disabled. Enable "Allow Macro Execution" in the Foundry MCP Bridge module settings.',
+          error:
+            'Macro execution is disabled. Enable "Allow Macro Execution" in the Foundry MCP Bridge module settings.',
           success: false,
         };
       }
       this.dataAccess.validateFoundryState();
       return await this.dataAccess.executeMacro(data ?? {});
     } catch (error) {
-      throw new Error(`Failed to execute macro: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to execute macro: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -457,7 +466,8 @@ export class QueryHandlers {
       }
       if (!allowed) {
         return {
-          error: 'Combat writes are disabled. Enable "Allow Combat Writes" in the Foundry MCP Bridge module settings.',
+          error:
+            'Combat writes are disabled. Enable "Allow Combat Writes" in the Foundry MCP Bridge module settings.',
           success: false,
         };
       }
@@ -1523,8 +1533,8 @@ export class QueryHandlers {
       if (!gmCheck.allowed) {
         return { error: 'Access denied', success: false };
       }
-      if (!data?.playlist || !data?.command) {
-        throw new Error('playlist and command are required');
+      if (!data?.command || (!data?.playlist && data.command !== 'stop-all')) {
+        throw new Error('command is required, and playlist for every command except stop-all');
       }
       return await this.dataAccess.controlPlaylist(data);
     } catch (error) {

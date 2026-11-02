@@ -10370,10 +10370,14 @@ export class FoundryDataAccess {
         if (!doc) {
           return {
             success: true,
+            // What is audible right now, so the GM can see (and stop) the
+            // current music without describing every playlist
+            nowPlaying: this.nowPlaying(),
             playlists: playlists().map((pl: any) => ({
               id: pl.id,
               name: pl.name,
               mode: pl.mode,
+              modeLabel: this.playlistModeLabel(pl.mode),
               playing: pl.playing,
               soundCount: pl.sounds?.size || 0,
             })),
@@ -10385,6 +10389,7 @@ export class FoundryDataAccess {
             id: doc.id,
             name: doc.name,
             mode: doc.mode,
+            modeLabel: this.playlistModeLabel(doc.mode),
             playing: doc.playing,
             description: doc.description || '',
             folder: doc.folder || null,
@@ -10511,22 +10516,93 @@ export class FoundryDataAccess {
    * per-sound play/stop, all through the client Playlist API so the server
    * and every connected client stay in sync.
    */
-  async controlPlaylist(options: {
+  /** Foundry's CONST.PLAYLIST_MODES as words. */
+  private playlistModeLabel(mode: number): string {
+    return (
+      (
+        {
+          [-1]: 'soundboard only (play tracks individually; play-all does nothing)',
+          0: 'sequential',
+          1: 'shuffle',
+          2: 'simultaneous (all tracks at once)',
+        } as Record<number, string>
+      )[mode] ?? `unknown (${mode})`
+    );
+  }
+
+  /** Every playlist with at least one sound playing, and which sounds. */
+  private nowPlaying(): Array<{
+    playlistId: string;
     playlist: string;
-    command: 'play' | 'stop' | 'cycle-mode' | 'play-sound' | 'stop-sound';
+    sounds: Array<{ id: string; name: string }>;
+  }> {
+    return ((game as any).playlists?.contents || [])
+      .map((pl: any) => ({
+        playlistId: pl.id,
+        playlist: pl.name,
+        sounds: (pl.sounds?.contents || [])
+          .filter((s: any) => s.playing)
+          .map((s: any) => ({ id: s.id, name: s.name })),
+      }))
+      .filter((p: any) => p.sounds.length > 0);
+  }
+
+  async controlPlaylist(options: {
+    playlist?: string;
+    command: 'play' | 'stop' | 'cycle-mode' | 'play-sound' | 'stop-sound' | 'stop-all';
     sound?: string;
   }): Promise<any> {
     this.validateFoundryState();
 
     try {
+      if (options.command === 'stop-all') {
+        // Stop everything audible, whichever playlists it comes from
+        const playing = this.nowPlaying();
+        for (const p of playing) {
+          const pl = (game as any).playlists?.get(p.playlistId);
+          if (pl) await pl.stopAll();
+        }
+        return {
+          success: true,
+          action: 'stop-all',
+          stopped: playing,
+          message: playing.length ? undefined : 'Nothing was playing',
+        };
+      }
+      if (!options.playlist) throw new Error('playlist is required for this command');
+
       const pl = this.findMusicDoc((game as any).playlists, options.playlist, 'playlist');
       if (!pl) throw new Error('playlist identifier is required');
-      const info = { id: pl.id, name: pl.name, mode: pl.mode };
+      const info = {
+        id: pl.id,
+        name: pl.name,
+        mode: pl.mode,
+        modeLabel: this.playlistModeLabel(pl.mode),
+      };
 
       switch (options.command) {
-        case 'play':
+        case 'play': {
+          // In soundboard-only mode (-1) Foundry's playAll() silently does
+          // nothing, so say so rather than report a success that never played.
+          if (pl.mode === -1) {
+            return {
+              success: false,
+              action: 'play',
+              playlist: info,
+              error:
+                'This playlist is soundboard-only, so it cannot be played as a whole. Use play-sound for a single track.',
+              tracks: (pl.sounds?.contents || []).map((s: any) => s.name),
+            };
+          }
           await pl.playAll();
-          return { success: true, action: 'play', playlist: info };
+          const started = !!pl.playing;
+          return {
+            success: started,
+            action: 'play',
+            playlist: info,
+            ...(started ? {} : { error: 'Foundry did not start the playlist (is it empty?)' }),
+          };
+        }
         case 'stop':
           await pl.stopAll();
           return { success: true, action: 'stop', playlist: info };
